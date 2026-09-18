@@ -23,6 +23,8 @@ authenticating, so that work slots in on top of this.
 
 ## Running it
 
+You need [Node.js](https://nodejs.org) 22 or newer — the current LTS is fine.
+
 ```bash
 npm install
 npm run dev          # API on :3001, app on :5173 with live reload

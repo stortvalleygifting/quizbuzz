@@ -16,5 +16,5 @@
   "devDependencies": {
     "concurrently": "^9.1.2"
   },
-  "engines": { "node": ">=20" }
+  "engines": { "node": ">=22" }
 }
