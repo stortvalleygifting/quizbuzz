@@ -16,10 +16,24 @@ decline applications, make other members admin, step admins back down, and
 remove members. Anyone can leave, and a group can never be left without an
 admin.
 
-**Still to come** — events, the question master, the BUZZ screen and live
-scoring. The database already has tables for all of it (see
-`server/src/lib/schema.ts`), and the realtime socket is wired up and
-authenticating, so that work slots in on top of this.
+**Quiz nights** — group admins plan an event, members join it, and one of them
+is named question master. A finished quiz can be re-opened by the question
+master or an admin, with the scores and the questions already asked intact.
+
+**The buzzer** — once a quiz is live the screen splits: a BUZZ! button on top,
+and below it the scoreboard showing you and two people either side, by place,
+name and score. Everyone's button changes to whoever buzzed first, and stays
+tappable so people behind them take their place in the queue. The question
+master sees that name with +1 / 0 / -1 underneath: +1 scores and clears the
+queue for the next question, while 0 and -1 hand the floor to the next person
+who buzzed. Every change is pushed to every screen over Socket.IO.
+
+**Head to head** — tapping another member's name in a group shows your record
+against them: quizzes won, drawn and lost, and who reached the buzzer first on
+the questions you both buzzed on.
+
+**Still to come** — polishing the half-screen layout on real phones, and
+putting it somewhere it can be played from outside the house.
 
 ## Running it
 
@@ -83,5 +97,23 @@ It is created and migrated on startup, so there is no separate setup step.
 | `POST /api/groups/:id/members/:userId/approve` | Admin: let someone in. |
 | `POST /api/groups/:id/members/:userId/role` | Admin: make admin, or step one down. |
 | `DELETE /api/groups/:id/members/:userId` | Admin: remove or decline. Anyone: leave. |
+| `GET /api/groups/:id/head-to-head/:userId` | Your record against another member. |
+| `GET /api/groups/:id/events` | The group's quiz nights. |
+| `POST /api/groups/:id/events` | Admin: plan a quiz night. |
+| `GET /api/events/:id` | The whole live picture: players, queue, scores. |
+| `POST /api/events/:id/join` | Join a quiz. |
+| `DELETE /api/events/:id/join` | Drop out. |
+| `POST /api/events/:id/question-master` | Admin: name the question master. |
+| `POST /api/events/:id/start` | Go live and open the first question. |
+| `POST /api/events/:id/finish` | End the quiz. |
+| `POST /api/events/:id/reopen` | Bring a finished quiz back, scores intact. |
+| `POST /api/events/:id/buzz` | Buzz in. |
+| `POST /api/events/:id/judge` | Question master: `{ delta: 1 \| 0 \| -1 }`. |
+| `POST /api/events/:id/next-question` | Question master: abandon this question. |
 
 Every route except register and login needs `Authorization: Bearer <token>`.
+
+During a live quiz the app uses the socket rather than these last few routes, so
+a buzz is not waiting on an HTTP round trip. The socket takes `event:watch`,
+`event:buzz` and `event:judge`, and pushes `event:state` to every screen
+watching whenever anything changes.
