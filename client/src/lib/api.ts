@@ -154,5 +154,6 @@ export const api = {
     post<{ state: EventState }>(`/events/${eventId}/question-master`, { userId }),
   startEvent: (eventId: number) => post<{ state: EventState }>(`/events/${eventId}/start`),
   finishEvent: (eventId: number) => post<{ state: EventState }>(`/events/${eventId}/finish`),
+  reopenEvent: (eventId: number) => post<{ state: EventState }>(`/events/${eventId}/reopen`),
   nextQuestion: (eventId: number) => post<{ state: EventState }>(`/events/${eventId}/next-question`),
 };

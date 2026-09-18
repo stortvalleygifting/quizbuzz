@@ -325,6 +325,78 @@ describe('the scoreboard', () => {
     ]);
   });
 
+  it('re-opens a finished quiz with the scores intact', async () => {
+    const { eventId, owner, players } = await liveEvent(['ann', 'bob']);
+    const [ann] = players;
+
+    await buzz(eventId, ann.token);
+    await judge(eventId, owner.token, 1);
+    await request(app).post(`/api/events/${eventId}/finish`).set(auth(owner.token));
+
+    const reopened = await request(app).post(`/api/events/${eventId}/reopen`).set(auth(owner.token));
+    expect(reopened.status).toBe(200);
+    expect(reopened.body.state.event.status).toBe('live');
+    expect(reopened.body.state.question).not.toBeNull();
+    expect(reopened.body.state.leaderboard.find((e: { username: string }) => e.username === 'ann').score).toBe(1);
+
+    // Play carries on from where it stopped, and the question numbering with it.
+    expect((await buzz(eventId, ann.token)).status).toBe(200);
+    await judge(eventId, owner.token, 1);
+    expect((await state(eventId, ann.token)).leaderboard.find((e: { username: string }) => e.username === 'ann').score).toBe(2);
+  });
+
+  it('lets a group admin re-open it too, but nobody else', async () => {
+    const { eventId, owner, players } = await liveEvent(['ann', 'bob']);
+    // Hand the question master's screen to ann, so owner is admin-but-not-QM.
+    await request(app)
+      .post(`/api/events/${eventId}/question-master`)
+      .set(auth(owner.token))
+      .send({ userId: players[0].id });
+    await request(app).post(`/api/events/${eventId}/finish`).set(auth(players[0].token));
+
+    const byPlayer = await request(app).post(`/api/events/${eventId}/reopen`).set(auth(players[1].token));
+    expect(byPlayer.status).toBe(403);
+
+    const byAdmin = await request(app).post(`/api/events/${eventId}/reopen`).set(auth(owner.token));
+    expect(byAdmin.status).toBe(200);
+    expect(byAdmin.body.state.event.status).toBe('live');
+  });
+
+  it('shrugs off re-opening a quiz that is already running, and refuses one never started', async () => {
+    const { eventId, owner } = await liveEvent(['ann']);
+
+    const alreadyLive = await request(app).post(`/api/events/${eventId}/reopen`).set(auth(owner.token));
+    expect(alreadyLive.status).toBe(200);
+    expect(alreadyLive.body.state.event.status).toBe('live');
+
+    const scheduled = (
+      await request(app)
+        .post(`/api/groups/${alreadyLive.body.state.event.groupId}/events`)
+        .set(auth(owner.token))
+        .send({ name: 'Next week' })
+    ).body.event.id;
+    const notStarted = await request(app).post(`/api/events/${scheduled}/reopen`).set(auth(owner.token));
+    expect(notStarted.status).toBe(400);
+    expect(notStarted.body.code).toBe('not_finished');
+  });
+
+  it('lets people join a re-opened quiz again', async () => {
+    const { eventId, owner, groupId } = await liveEvent(['ann']);
+    await request(app).post(`/api/events/${eventId}/finish`).set(auth(owner.token));
+
+    const latecomer = await register('latecomer');
+    await request(app).post(`/api/groups/${groupId}/apply`).set(auth(latecomer.token));
+    await request(app).post(`/api/groups/${groupId}/members/${latecomer.id}/approve`).set(auth(owner.token));
+
+    const tooLate = await request(app).post(`/api/events/${eventId}/join`).set(auth(latecomer.token));
+    expect(tooLate.status).toBe(400);
+
+    await request(app).post(`/api/events/${eventId}/reopen`).set(auth(owner.token));
+    const joined = await request(app).post(`/api/events/${eventId}/join`).set(auth(latecomer.token));
+    expect(joined.status).toBe(200);
+    expect(joined.body.state.me.isParticipant).toBe(true);
+  });
+
   it('finishes an event and stops the buzzers', async () => {
     const { eventId, owner, players } = await liveEvent(['ann']);
     const finished = await request(app).post(`/api/events/${eventId}/finish`).set(auth(owner.token));

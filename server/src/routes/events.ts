@@ -217,6 +217,40 @@ eventsRouter.post(
 );
 
 /**
+ * Question master or admin: bring a finished quiz back to life.
+ *
+ * Scores, the people playing and the questions already asked all stay as they
+ * were, and a fresh question opens so the next buzz counts — a quiz ended by a
+ * mistimed tap picks up where it left off.
+ */
+eventsRouter.post(
+  '/events/:eventId/reopen',
+  asyncHandler(async (req, res) => {
+    const eventId = parseId(req.params.eventId, 'event');
+    const me = req.user!.uid;
+    const db = getDb();
+    const event = getEvent(db, eventId);
+    if (event.question_master_id !== me) requireEventAdmin(db, event, me);
+
+    if (event.status === 'live') return res.json({ state: buildState(db, eventId, me) });
+    if (event.status !== 'finished') {
+      throw badRequest('That quiz has not finished, so there is nothing to re-open.', 'not_finished');
+    }
+    if (!event.question_master_id) {
+      throw badRequest('Pick a question master before you re-open this.', 'no_question_master');
+    }
+
+    transaction(db, () => {
+      db.prepare(`UPDATE events SET status = 'live', ended_at = NULL WHERE id = ?`).run(eventId);
+      openNextQuestion(db, eventId);
+    });
+
+    await broadcastEvent(eventId);
+    res.json({ state: buildState(db, eventId, me) });
+  }),
+);
+
+/**
  * Buzz in. The live app sends this over the socket; this is the same thing over
  * HTTP, so the behaviour can be driven without a socket.
  */

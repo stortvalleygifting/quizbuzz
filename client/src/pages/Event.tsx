@@ -115,6 +115,11 @@ export default function Event() {
             <div className="card">
               <Scoreboard state={state} />
             </div>
+            {(me.isQuestionMaster || me.isAdmin) && (
+              <button className="primary block" onClick={() => run(() => api.reopenEvent(id))}>
+                Re-open this quiz
+              </button>
+            )}
           </>
         )}
 
