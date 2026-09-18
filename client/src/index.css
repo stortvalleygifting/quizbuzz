@@ -8,6 +8,7 @@
   --accent: #6c5ce7;
   --accent-bright: #8b7bff;
   --good: #27c093;
+  --queued: #f5b73d;
   --bad: #ff5c72;
   --radius: 14px;
   color-scheme: dark;
@@ -308,7 +309,10 @@ a { color: var(--accent-bright); }
 }
 .buzzed:disabled { opacity: 1; }
 .buzzed:active:not(:disabled) { background: var(--line); }
-.buzzed.mine { background: #1e4a3c; border-color: var(--good); }
+/* The colour is the whole message: at a glance across a loud room, green means
+   the floor is yours and yellow means you are holding a place in the queue. */
+.buzzed.mine { background: var(--good); border-color: var(--good); color: #06281f; }
+.buzzed.queued { background: var(--queued); border-color: var(--queued); color: #3a2606; }
 .buzz-name {
   font-size: clamp(30px, 11vw, 52px);
   font-weight: 800;
@@ -318,7 +322,8 @@ a { color: var(--accent-bright); }
   text-overflow: ellipsis;
 }
 .buzz-sub, .buzz-idle-text { color: var(--muted); font-size: 14px; }
-.buzzed.mine .buzz-sub { color: #b9f0dd; }
+.buzzed.mine .buzz-sub { color: #0a3a2d; }
+.buzzed.queued .buzz-sub { color: #5a3c08; }
 
 /* Question master: the name on top, the three scoring buttons underneath. */
 .qm-panel { flex: 1; display: flex; flex-direction: column; gap: 10px; min-height: 0; }

@@ -104,7 +104,11 @@ export default function Event() {
 
   const { event, me, answering, queue } = state;
   const waiting = queue.filter((b) => b.outcome === 'waiting');
-  const myPlaceInQueue = queue.findIndex((b) => b.userId === me.userId) + 1;
+  // Your place among the people still to be heard, so 1st means you are next
+  // up — the same order the "Next up" line lists. 0 if you are not waiting:
+  // either you never buzzed, or the question master has already been to you.
+  const myPlaceInQueue = waiting.findIndex((b) => b.userId === me.userId) + 1;
+  const inQueue = myPlaceInQueue > 0;
 
   // ------------------------------------------------ before the quiz starts --
   if (event.status !== 'live') {
@@ -268,7 +272,7 @@ export default function Event() {
           // The button shows whoever got in first, but it still takes your buzz
           // so you can take your place in the queue behind them.
           <button
-            className={`buzzed${mine ? ' mine' : ''}`}
+            className={`buzzed${mine ? ' mine' : inQueue ? ' queued' : ''}`}
             disabled={me.hasBuzzed}
             onClick={buzz}
           >
@@ -276,9 +280,11 @@ export default function Event() {
             <div className="buzz-sub">
               {mine
                 ? 'Your answer — go!'
-                : me.hasBuzzed
+                : inQueue
                   ? `is answering · you are ${ordinal(myPlaceInQueue)} in the queue`
-                  : 'is answering · tap to join the queue'}
+                  : me.hasBuzzed
+                    ? 'is answering'
+                    : 'is answering · tap to join the queue'}
             </div>
           </button>
         ) : (
