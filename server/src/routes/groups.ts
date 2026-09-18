@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getDb } from '../lib/db.js';
+import { getDb, transaction } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
 import { asyncHandler } from '../lib/async.js';
 import { badRequest, conflict, notFound } from '../lib/errors.js';
@@ -14,6 +14,7 @@ import {
   type GroupRow,
 } from '../lib/groups.js';
 import { z } from 'zod';
+import type { SQLInputValue } from 'node:sqlite';
 
 export const groupsRouter = Router();
 groupsRouter.use(requireAuth);
@@ -52,7 +53,7 @@ groupsRouter.post(
       throw conflict('A group with that name already exists.', 'group_name_taken');
     }
 
-    const groupId = db.transaction(() => {
+    const groupId = transaction(db, () => {
       const info = db
         .prepare('INSERT INTO groups (name, description, created_by) VALUES (?, ?, ?)')
         .run(name, description, me);
@@ -62,9 +63,9 @@ groupsRouter.post(
          VALUES (?, ?, 'admin', 'approved', datetime('now'))`,
       ).run(id, me);
       return id;
-    })();
+    });
 
-    const row = db.prepare(`${SUMMARY_SELECT} WHERE g.id = @id`).get({ me, id: groupId }) as GroupSummaryRow;
+    const row = db.prepare(`${SUMMARY_SELECT} WHERE g.id = @id`).get({ me, id: groupId }) as unknown as GroupSummaryRow;
     res.status(201).json({ group: summarize(row) });
   }),
 );
@@ -78,7 +79,7 @@ groupsRouter.get('/mine', (req, res) => {
         WHERE mine.user_id = @me
         ORDER BY mine.status = 'approved' DESC, g.name COLLATE NOCASE`,
     )
-    .all({ me }) as GroupSummaryRow[];
+    .all({ me }) as unknown as GroupSummaryRow[];
   const all = rows.map(summarize);
   res.json({
     groups: all.filter((g) => g.myStatus === 'approved'),
@@ -90,7 +91,7 @@ groupsRouter.get('/mine', (req, res) => {
 groupsRouter.get('/search', (req, res) => {
   const me = req.user!.uid;
   const q = String(req.query.q ?? '').trim();
-  const params: Record<string, unknown> = { me, limit: 30 };
+  const params: Record<string, SQLInputValue> = { me, limit: 30 };
   let where = '';
   if (q) {
     where = 'WHERE g.name LIKE @like OR g.description LIKE @like';
@@ -102,7 +103,7 @@ groupsRouter.get('/search', (req, res) => {
         ORDER BY member_count DESC, g.name COLLATE NOCASE
         LIMIT @limit`,
     )
-    .all(params) as GroupSummaryRow[];
+    .all(params) as unknown as GroupSummaryRow[];
   res.json({ groups: rows.map(summarize) });
 });
 
@@ -115,7 +116,7 @@ groupsRouter.get(
     const db = getDb();
     getGroup(db, groupId);
 
-    const row = db.prepare(`${SUMMARY_SELECT} WHERE g.id = @id`).get({ me, id: groupId }) as GroupSummaryRow;
+    const row = db.prepare(`${SUMMARY_SELECT} WHERE g.id = @id`).get({ me, id: groupId }) as unknown as GroupSummaryRow;
     const membership = getMembership(db, groupId, me);
     const isMember = membership?.status === 'approved';
     const isAdmin = isMember && membership.role === 'admin';
@@ -128,7 +129,7 @@ groupsRouter.get(
               WHERE gm.group_id = ? AND gm.status = 'approved'
               ORDER BY gm.role = 'admin' DESC, u.username COLLATE NOCASE`,
           )
-          .all(groupId) as { id: number; username: string; role: string; joined_at: string }[])
+          .all(groupId) as unknown as { id: number; username: string; role: string; joined_at: string }[])
       : [];
 
     const requests = isAdmin
@@ -139,7 +140,7 @@ groupsRouter.get(
               WHERE gm.group_id = ? AND gm.status = 'pending'
               ORDER BY gm.requested_at`,
           )
-          .all(groupId) as { id: number; username: string; requested_at: string }[])
+          .all(groupId) as unknown as { id: number; username: string; requested_at: string }[])
       : [];
 
     res.json({

@@ -24,6 +24,7 @@ authenticating, so that work slots in on top of this.
 ## Running it
 
 You need [Node.js](https://nodejs.org) 22 or newer — the current LTS is fine.
+Nothing here compiles native code, so no build tools are needed on any platform.
 
 ```bash
 npm install
@@ -52,7 +53,7 @@ npm run typecheck    # TypeScript, both halves
 
 | | |
 |---|---|
-| `server/` | Node + Express API, SQLite via better-sqlite3, Socket.IO for realtime |
+| `server/` | Node + Express API, SQLite via Node's built-in `node:sqlite`, Socket.IO for realtime |
 | `client/` | React + Vite, TypeScript, mobile-first CSS, no UI framework |
 
 The database is a single SQLite file (`server/data/quizbuzz.sqlite` by default).

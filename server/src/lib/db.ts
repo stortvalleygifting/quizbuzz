@@ -1,16 +1,20 @@
-import Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { SCHEMA_SQL } from './schema.js';
 
-export type DB = Database.Database;
+/**
+ * SQLite comes with Node itself, so the app has no native dependency to
+ * compile and `npm install` needs no C++ toolchain on any platform.
+ */
+export type DB = DatabaseSync;
 
 let instance: DB | null = null;
 
 export function openDatabase(file: string): DB {
   if (file !== ':memory:') mkdirSync(dirname(resolve(file)), { recursive: true });
-  const db = new Database(file);
-  db.pragma('foreign_keys = ON');
+  const db = new DatabaseSync(file);
+  db.exec('PRAGMA foreign_keys = ON');
   db.exec(SCHEMA_SQL);
   return db;
 }
@@ -25,4 +29,17 @@ export function getDb(): DB {
 /** Test helper: swap in an in-memory database. */
 export function setDb(db: DB): void {
   instance = db;
+}
+
+/** Runs `fn` in a transaction, rolling back if it throws. */
+export function transaction<T>(db: DB, fn: () => T): T {
+  db.exec('BEGIN');
+  try {
+    const result = fn();
+    db.exec('COMMIT');
+    return result;
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
 }

@@ -42,7 +42,7 @@ authRouter.post(
     const { username, password } = parseBody(credentialsSchema, req.body);
     const row = getDb()
       .prepare('SELECT id, username, password_hash FROM users WHERE username = ?')
-      .get(username) as UserRow | undefined;
+      .get(username) as unknown as UserRow | undefined;
 
     // Same message either way, so the form can't be used to discover usernames.
     const failure = unauthorized('That username and password don’t match.');
@@ -57,7 +57,7 @@ authRouter.post(
 authRouter.get('/me', requireAuth, (req, res) => {
   const row = getDb()
     .prepare('SELECT id, username, created_at FROM users WHERE id = ?')
-    .get(req.user!.uid) as Omit<UserRow, 'password_hash'> | undefined;
+    .get(req.user!.uid) as unknown as Omit<UserRow, 'password_hash'> | undefined;
   if (!row) throw unauthorized();
   res.json({ user: { id: row.id, username: row.username, createdAt: row.created_at } });
 });

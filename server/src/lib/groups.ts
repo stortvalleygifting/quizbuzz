@@ -19,7 +19,7 @@ export interface GroupRow {
 }
 
 export function getGroup(db: DB, groupId: number): GroupRow {
-  const row = db.prepare('SELECT * FROM groups WHERE id = ?').get(groupId) as GroupRow | undefined;
+  const row = db.prepare('SELECT * FROM groups WHERE id = ?').get(groupId) as unknown as GroupRow | undefined;
   if (!row) throw notFound('That group no longer exists.');
   return row;
 }
@@ -27,7 +27,7 @@ export function getGroup(db: DB, groupId: number): GroupRow {
 export function getMembership(db: DB, groupId: number, userId: number): MembershipRow | undefined {
   return db
     .prepare('SELECT * FROM group_members WHERE group_id = ? AND user_id = ?')
-    .get(groupId, userId) as MembershipRow | undefined;
+    .get(groupId, userId) as unknown as MembershipRow | undefined;
 }
 
 /** The caller must be an approved member of the group. */
@@ -50,7 +50,7 @@ export function countAdmins(db: DB, groupId: number): number {
       `SELECT COUNT(*) AS n FROM group_members
         WHERE group_id = ? AND status = 'approved' AND role = 'admin'`,
     )
-    .get(groupId) as { n: number };
+    .get(groupId) as unknown as { n: number };
   return row.n;
 }
 
