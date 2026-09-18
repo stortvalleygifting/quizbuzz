@@ -17,23 +17,31 @@ remove members. Anyone can leave, and a group can never be left without an
 admin.
 
 **Quiz nights** — group admins plan an event, members join it, and one of them
-is named question master. A finished quiz can be re-opened by the question
-master or an admin, with the scores and the questions already asked intact.
+is made question master, and the admin starts it when everyone is in the room.
+A finished quiz can be re-opened by the question master or an admin, with the
+scores and the questions already asked intact.
 
-**The buzzer** — once a quiz is live the screen splits: a BUZZ! button on top,
-and below it the scoreboard showing you and two people either side, by place,
-name and score. Everyone's button changes to whoever buzzed first, and stays
-tappable so people behind them take their place in the queue. The question
-master sees that name with +1 / 0 / -1 underneath: +1 scores and clears the
-queue for the next question, while 0 and -1 hand the floor to the next person
-who buzzed. Every change is pushed to every screen over Socket.IO.
+**The live screen** — the scoreboard fills the top half and the BUZZ! button the
+bottom half, where a thumb already is when the phone is held in one hand. The
+board shows five rows — you, and two people either side — as place, name and
+score. The first buzz takes the floor and everyone's button turns into that
+person's name; tapping it again puts you in the queue behind them. The question
+master gets that name across the top half and +1 / 0 / -1 across the bottom.
++1 ends the question and resets everyone; 0 and -1 pass the floor to the next
+person who buzzed. Every screen updates over a websocket as it happens.
+
+It is built for a loud room: the phone vibrates when your tap lands and again
+when the floor is yours, the button says so the moment a buzz is sent rather
+than waiting on the server, and the screen tells you when it has lost its
+connection instead of showing a scoreboard that is quietly out of date. Add it
+to your home screen and it opens without an address bar.
 
 **Head to head** — tapping another member's name in a group shows your record
 against them: quizzes won, drawn and lost, and who reached the buzzer first on
 the questions you both buzzed on.
 
-**Still to come** — polishing the half-screen layout on real phones, and
-putting it somewhere it can be played from outside the house.
+**Still to come** — actually putting it on the internet. The Docker and fly.io
+setup below is written and ready to run, but nothing is hosted yet.
 
 ## Running it
 
@@ -80,6 +88,37 @@ It is created and migrated on startup, so there is no separate setup step.
 | `PORT` | `3001` | API port |
 | `DATABASE_FILE` | `server/data/quizbuzz.sqlite` | SQLite file |
 | `JWT_SECRET` | generated in dev | **Required in production**, 16+ characters |
+| `NODE_ENV` | unset | Set to `production` when deployed |
+
+Without a valid `JWT_SECRET`, a production server exits on startup rather than
+starting up healthy and failing on the first person who tries to sign in.
+
+## Putting it online
+
+The app is one always-on Node process with a SQLite file next to it, so it needs
+a host that gives it **Node 22 or newer**, **a persistent disk**, **websockets**,
+and **exactly one instance** — the buzz queue and the database both live inside
+that single process, so a second instance would be a second, different quiz.
+
+[Fly.io](https://fly.io) fits all four. `Dockerfile` and `fly.toml` here are set
+up for it: one 256MB machine in London that never sleeps, with a 1GB volume
+mounted at `/data` holding the database.
+
+```bash
+fly auth signup                       # or: fly auth login
+fly launch --copy-config --no-deploy  # keeps the fly.toml in this repo
+fly volumes create quizbuzz_data --size 1
+fly secrets set JWT_SECRET="$(openssl rand -hex 32)"
+fly deploy
+```
+
+`fly launch` will pick a unique name if `quizbuzz` is taken, and the app is then
+live at `https://<name>.fly.dev` — that is the link to give people in the pub.
+
+Any host meeting those four requirements works the same way. The one thing to
+watch for is a free tier that sleeps after a few minutes idle: the first person
+to open the link then waits out a cold start, which is a poor way to begin a
+quiz night.
 
 ### API
 
@@ -100,16 +139,15 @@ It is created and migrated on startup, so there is no separate setup step.
 | `GET /api/groups/:id/head-to-head/:userId` | Your record against another member. |
 | `GET /api/groups/:id/events` | The group's quiz nights. |
 | `POST /api/groups/:id/events` | Admin: plan a quiz night. |
-| `GET /api/events/:id` | The whole live picture: players, queue, scores. |
-| `POST /api/events/:id/join` | Join a quiz. |
-| `DELETE /api/events/:id/join` | Drop out. |
-| `POST /api/events/:id/question-master` | Admin: name the question master. |
+| `GET /api/events/:id` | The whole live picture: queue, scores, who is who. |
+| `POST /api/events/:id/join` | Join a quiz. `DELETE` to drop out. |
+| `POST /api/events/:id/question-master` | Admin: hand someone the QM screen. |
 | `POST /api/events/:id/start` | Go live and open the first question. |
-| `POST /api/events/:id/finish` | End the quiz. |
+| `POST /api/events/:id/finish` | Call it a night. |
 | `POST /api/events/:id/reopen` | Bring a finished quiz back, scores intact. |
-| `POST /api/events/:id/buzz` | Buzz in. |
-| `POST /api/events/:id/judge` | Question master: `{ delta: 1 \| 0 \| -1 }`. |
-| `POST /api/events/:id/next-question` | Question master: abandon this question. |
+| `POST /api/events/:id/buzz` | Buzz in. The app uses the socket instead. |
+| `POST /api/events/:id/judge` | QM: `+1`, `0` or `-1` for whoever is answering. |
+| `POST /api/events/:id/next-question` | QM: give up on this one, move everyone on. |
 
 Every route except register and login needs `Authorization: Bearer <token>`.
 

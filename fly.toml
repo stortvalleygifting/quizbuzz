@@ -1,0 +1,42 @@
+# One machine, always on, and deliberately never more than one: the SQLite file
+# and the buzz queue both live inside this single process, so a second machine
+# would quietly be running a second, different quiz.
+
+app = "quizbuzz"
+primary_region = "lhr"
+
+[build]
+
+[env]
+  PORT = "8080"
+  DATABASE_FILE = "/data/quizbuzz.sqlite"
+
+# Accounts, groups and scores live here. Without it they are wiped on redeploy.
+[[mounts]]
+  source = "quizbuzz_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # A quiz that has to cold-start when the first person taps the link is no use,
+  # so the machine stays up rather than sleeping between quiz nights.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "connections"
+    soft_limit = 150
+    hard_limit = 200
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    timeout = "5s"
+    method = "GET"
+    path = "/api/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
