@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { getDb } from '../lib/db.js';
+import { getDb, transaction } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
 import { asyncHandler } from '../lib/async.js';
 import { badRequest, conflict } from '../lib/errors.js';
@@ -91,14 +91,14 @@ eventsRouter.post(
     getGroup(db, groupId);
     requireAdmin(db, groupId, me);
 
-    const eventId = db.transaction(() => {
+    const eventId = transaction(db, () => {
       const info = db
         .prepare('INSERT INTO events (group_id, name, scheduled_for, created_by) VALUES (?, ?, ?, ?)')
         .run(groupId, name, scheduledFor ?? null, me);
       const id = Number(info.lastInsertRowid);
       db.prepare('INSERT INTO event_participants (event_id, user_id) VALUES (?, ?)').run(id, me);
       return id;
-    })();
+    });
 
     res.status(201).json({ event: summarize(eventId, me) });
   }),
@@ -200,7 +200,7 @@ eventsRouter.post(
     const event = getEvent(db, eventId);
     if (event.question_master_id !== me) requireEventAdmin(db, event, me);
 
-    db.transaction(() => {
+    transaction(db, () => {
       if (event.current_question_id) {
         db.prepare(`UPDATE questions SET state = 'closed', closed_at = datetime('now') WHERE id = ?`).run(
           event.current_question_id,
@@ -209,7 +209,7 @@ eventsRouter.post(
       db.prepare(
         `UPDATE events SET status = 'finished', ended_at = datetime('now'), current_question_id = NULL WHERE id = ?`,
       ).run(eventId);
-    })();
+    });
 
     await broadcastEvent(eventId);
     res.json({ state: buildState(db, eventId, me) });
@@ -258,14 +258,14 @@ eventsRouter.post(
     requireQuestionMaster(event, me);
     if (event.status !== 'live') throw badRequest('This event has not started yet.', 'not_live');
 
-    db.transaction(() => {
+    transaction(db, () => {
       if (event.current_question_id) {
         db.prepare(`UPDATE buzzes SET outcome = 'skipped' WHERE question_id = ? AND outcome IN ('waiting','answering')`).run(
           event.current_question_id,
         );
       }
       openNextQuestion(db, eventId);
-    })();
+    });
 
     await broadcastEvent(eventId);
     res.json({ state: buildState(db, eventId, me) });

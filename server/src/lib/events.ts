@@ -1,4 +1,4 @@
-import type { DB } from './db.js';
+import { transaction, type DB } from './db.js';
 import { badRequest, conflict, forbidden, notFound } from './errors.js';
 import { getMembership } from './groups.js';
 
@@ -101,7 +101,7 @@ export function openNextQuestion(db: DB, eventId: number): QuestionRow {
   const info = db.prepare(`INSERT INTO questions (event_id, seq) VALUES (?, ?)`).run(eventId, next);
   const questionId = Number(info.lastInsertRowid);
   db.prepare('UPDATE events SET current_question_id = ? WHERE id = ?').run(questionId, eventId);
-  return db.prepare('SELECT * FROM questions WHERE id = ?').get(questionId) as QuestionRow;
+  return db.prepare('SELECT * FROM questions WHERE id = ?').get(questionId) as unknown as QuestionRow;
 }
 
 // ----------------------------------------------------------------- buzzes --
@@ -112,7 +112,7 @@ export function getQueue(db: DB, questionId: number): (BuzzRow & { username: str
       `SELECT b.*, u.username FROM buzzes b JOIN users u ON u.id = b.user_id
         WHERE b.question_id = ? ORDER BY b.seq`,
     )
-    .all(questionId) as (BuzzRow & { username: string })[];
+    .all(questionId) as unknown as (BuzzRow & { username: string })[];
 }
 
 /** Whoever is currently holding the floor — the name everyone's button shows. */
@@ -127,11 +127,11 @@ export function getAnswering(db: DB, questionId: number): (BuzzRow & { username:
 
 /**
  * Records a buzz. The first buzz on a question takes the floor; later ones
- * queue up behind it in the order they arrived. better-sqlite3 runs one
- * statement at a time, so the sequence number settles the race honestly.
+ * queue up behind it in the order they arrived. The whole read-then-insert
+ * runs in one transaction, so the sequence number settles the race honestly.
  */
 export function recordBuzz(db: DB, eventId: number, userId: number): { accepted: boolean } {
-  return db.transaction(() => {
+  return transaction(db, () => {
     const event = getEvent(db, eventId);
     if (event.status !== 'live') throw badRequest('This event has not started yet.', 'not_live');
     if (event.question_master_id === userId) throw forbidden('The question master does not buzz in.');
@@ -156,7 +156,7 @@ export function recordBuzz(db: DB, eventId: number, userId: number): { accepted:
       next === 1 ? 'answering' : 'waiting',
     );
     return { accepted: true };
-  })();
+  });
 }
 
 // ---------------------------------------------------------------- scoring --
@@ -176,7 +176,7 @@ export function judgeAnswer(
   masterId: number,
   delta: Judgement,
 ): { scored: number; nextQuestion: boolean } {
-  return db.transaction(() => {
+  return transaction(db, () => {
     const event = getEvent(db, eventId);
     requireQuestionMaster(event, masterId);
     if (event.status !== 'live') throw badRequest('This event has not started yet.', 'not_live');
@@ -219,7 +219,7 @@ export function judgeAnswer(
     db.prepare(`UPDATE buzzes SET outcome = 'skipped' WHERE question_id = ? AND outcome = 'waiting'`).run(question.id);
     openNextQuestion(db, eventId);
     return { scored: current.user_id, nextQuestion: true };
-  })();
+  });
 }
 
 // ------------------------------------------------------------ leaderboard --
