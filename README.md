@@ -100,58 +100,51 @@ a host that gives it **Node 22 or newer**, **a persistent disk**, **websockets**
 and **exactly one instance** — the buzz queue and the database both live inside
 that single process, so a second instance would be a second, different quiz.
 
-[Fly.io](https://fly.io) fits all four. `Dockerfile` and `fly.toml` here are set
-up for it: one 256MB machine in London that never sleeps, with a 1GB volume
-mounted at `/data` holding the database.
+[Fly.io](https://fly.io) fits all four, and `Dockerfile` and `fly.toml` here are
+set up for it: one 256MB machine that never sleeps, with a 1GB volume mounted at
+`/data` holding the database. It costs roughly **$2 a month** — about $1.94 for
+the machine and 15 cents for the volume.
+
+First install flyctl, following
+[Fly's install page](https://fly.io/docs/flyctl/install/) — on Windows that is
+one PowerShell line, on macOS and Linux one shell line. Then, from the root of
+this repo:
 
 ```bash
-fly auth signup                       # or: fly auth login
-fly launch --copy-config --no-deploy  # keeps the fly.toml in this repo
-fly volumes create quizbuzz_data --size 1
-fly secrets set JWT_SECRET="$(openssl rand -hex 32)"
+fly auth signup           # or `fly auth login` if you already have an account
+fly launch --no-deploy    # say yes to copying the existing configuration
+```
+
+`fly launch` asks for an app name. Fly names are global, so `quizbuzz` is
+probably taken — pick something like `quizbuzz-stortvalley`. It writes the name
+you choose into `fly.toml`.
+
+Next, the signing secret. Generating it needs no extra tools, since you already
+have Node:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+Copy what that prints and hand it to Fly, then deploy:
+
+```bash
+fly secrets set JWT_SECRET=paste-the-value-here
 fly deploy
 ```
 
-`fly launch` will pick a unique name if `quizbuzz` is taken, and the app is then
-live at `https://<name>.fly.dev` — that is the link to give people in the pub.
+The first deploy creates the volume and takes a few minutes. After it,
+`fly open` opens the app, and its address — `https://<your-app-name>.fly.dev` —
+is the link to give people in the pub. `fly logs` shows what the server is
+doing, and `fly status` whether the machine is up.
+
+Two things worth knowing. Everyone needs their own account, so tell people to
+tap **Create an account** the first time. And if a deploy ever fails saying the
+volume does not exist, create it by hand with
+`fly volumes create quizbuzz_data --size 1` and deploy again.
 
 Any host meeting those four requirements works the same way. The one thing to
 watch for is a free tier that sleeps after a few minutes idle: the first person
 to open the link then waits out a cold start, which is a poor way to begin a
 quiz night.
 
-### API
-
-| | |
-|---|---|
-| `POST /api/auth/register` | Create an account. Returns a token. |
-| `POST /api/auth/login` | Sign in. Returns a token. |
-| `GET /api/auth/me` | Who am I. |
-| `POST /api/groups` | Create a group; you become its admin. |
-| `GET /api/groups/mine` | Groups I am in, and applications I am waiting on. |
-| `GET /api/groups/search?q=` | Find groups to apply to. |
-| `GET /api/groups/:id` | Group detail. Members see the roster, admins also see requests. |
-| `POST /api/groups/:id/apply` | Apply to join. |
-| `DELETE /api/groups/:id/apply` | Withdraw an application. |
-| `POST /api/groups/:id/members/:userId/approve` | Admin: let someone in. |
-| `POST /api/groups/:id/members/:userId/role` | Admin: make admin, or step one down. |
-| `DELETE /api/groups/:id/members/:userId` | Admin: remove or decline. Anyone: leave. |
-| `GET /api/groups/:id/head-to-head/:userId` | Your record against another member. |
-| `GET /api/groups/:id/events` | The group's quiz nights. |
-| `POST /api/groups/:id/events` | Admin: plan a quiz night. |
-| `GET /api/events/:id` | The whole live picture: queue, scores, who is who. |
-| `POST /api/events/:id/join` | Join a quiz. `DELETE` to drop out. |
-| `POST /api/events/:id/question-master` | Admin: hand someone the QM screen. |
-| `POST /api/events/:id/start` | Go live and open the first question. |
-| `POST /api/events/:id/finish` | Call it a night. |
-| `POST /api/events/:id/reopen` | Bring a finished quiz back, scores intact. |
-| `POST /api/events/:id/buzz` | Buzz in. The app uses the socket instead. |
-| `POST /api/events/:id/judge` | QM: `+1`, `0` or `-1` for whoever is answering. |
-| `POST /api/events/:id/next-question` | QM: give up on this one, move everyone on. |
-
-Every route except register and login needs `Authorization: Bearer <token>`.
-
-During a live quiz the app uses the socket rather than these last few routes, so
-a buzz is not waiting on an HTTP round trip. The socket takes `event:watch`,
-`event:buzz` and `event:judge`, and pushes `event:state` to every screen
-watching whenever anything changes.
