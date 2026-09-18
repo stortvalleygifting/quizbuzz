@@ -1,6 +1,8 @@
+import { useEffect, useRef } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, type BoardEntry, type EventState } from '../lib/api';
 import { useEventState } from '../lib/useEventState';
+import { JUDGED, YOUR_TURN, vibrate } from '../lib/haptics';
 
 const ordinal = (n: number): string => {
   const suffix = n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th';
@@ -26,15 +28,31 @@ function Scoreboard({ state }: { state: EventState }) {
 
   if (rows.length === 0) return <div className="empty">Nobody is playing yet.</div>;
 
+  const queued = new Set(state.queue.filter((b) => b.outcome === 'waiting').map((b) => b.userId));
+
   return (
     <div className="board">
-      {rows.map((e) => (
-        <div className={`board-row${e.userId === state.me.userId ? ' me' : ''}`} key={e.userId}>
-          <span className="place">{e.place}</span>
-          <span className="who">{e.username}</span>
-          <span className="score">{e.score}</span>
-        </div>
-      ))}
+      {rows.map((e) => {
+        const isMe = e.userId === state.me.userId;
+        const answering = state.answering?.userId === e.userId;
+        return (
+          <div
+            className={`board-row${isMe ? ' me' : ''}${answering ? ' answering' : ''}`}
+            key={e.userId}
+          >
+            <span className="place">{e.place}</span>
+            <span className="who">{e.username}</span>
+            {/* The question master judges from this board, so it says who is on
+                the floor and who is still holding a buzz. */}
+            {answering ? (
+              <span className="flag now">answering</span>
+            ) : (
+              queued.has(e.userId) && <span className="flag queued">buzzed</span>
+            )}
+            <span className="score">{e.score}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -43,13 +61,13 @@ function Scoreboard({ state }: { state: EventState }) {
 function JudgeControls({ onJudge }: { onJudge: (delta: 1 | 0 | -1) => void }) {
   return (
     <div className="judge">
-      <button className="judge-btn plus" onClick={() => onJudge(1)}>
+      <button className="judge-btn plus" onClick={() => onJudge(1)} aria-label="Correct, plus one">
         +1
       </button>
-      <button className="judge-btn zero" onClick={() => onJudge(0)}>
+      <button className="judge-btn zero" onClick={() => onJudge(0)} aria-label="No score, pass on">
         0
       </button>
-      <button className="judge-btn minus" onClick={() => onJudge(-1)}>
+      <button className="judge-btn minus" onClick={() => onJudge(-1)} aria-label="Wrong, minus one">
         −1
       </button>
     </div>
@@ -60,7 +78,15 @@ export default function Event() {
   const { eventId } = useParams();
   const id = Number(eventId);
   const navigate = useNavigate();
-  const { state, error, buzz, judge, run } = useEventState(id);
+  const { state, error, connected, buzzPending, buzz, judge, run } = useEventState(id);
+
+  // The moment the floor passes to you, in a room too loud to hear anything.
+  const wasMine = useRef(false);
+  const mine = state?.answering?.userId === state?.me.userId && Boolean(state?.answering);
+  useEffect(() => {
+    if (mine && !wasMine.current) vibrate(YOUR_TURN);
+    wasMine.current = mine;
+  }, [mine]);
 
   if (!state) {
     return (
@@ -170,67 +196,90 @@ export default function Event() {
   }
 
   // ------------------------------------------------------------ live quiz --
+  // The scoreboard sits above and the buzzer takes the bottom half of the
+  // screen, where a thumb already is when the phone is held in one hand.
+  const onJudge = (delta: 1 | 0 | -1) => {
+    vibrate(JUDGED);
+    judge(delta);
+  };
+
   return (
     <div className="event-live">
-      <div className="event-head">
-        <Link to={`/groups/${event.groupId}`} className="back">
-          ‹
-        </Link>
-        <span className="grow">{event.name}</span>
-        <span className="sub">Q{state.question?.seq ?? '–'}</span>
-      </div>
+      <div className="board-half">
+        <div className="event-head">
+          <Link to={`/groups/${event.groupId}`} className="back" aria-label="Back to the group">
+            ‹
+          </Link>
+          <span className="grow">{event.name}</span>
+          <span className="qno">Q{state.question?.seq ?? '–'}</span>
+        </div>
 
-      {error && <div className="error">{error}</div>}
+        {!connected && <div className="netbar">Reconnecting… your buzz may not count yet.</div>}
+        {error && <div className="error thin">{error}</div>}
+
+        <Scoreboard state={state} />
+
+        {me.isQuestionMaster ? (
+          <div className="qm-tools">
+            <span className="sub grow">
+              {waiting.length > 0
+                ? `${waiting.length} still waiting to answer`
+                : answering
+                  ? 'Score the answer below.'
+                  : 'Nobody has buzzed.'}
+            </span>
+            <button className="small" onClick={() => run(() => api.nextQuestion(id))}>
+              Skip
+            </button>
+            <button className="small danger" onClick={() => run(() => api.finishEvent(id))}>
+              Finish
+            </button>
+          </div>
+        ) : (
+          waiting.length > 0 && (
+            <div className="queue">Next up: {waiting.map((b) => b.username).join(' · ')}</div>
+          )
+        )}
+      </div>
 
       <div className="buzz-half">
         {me.isQuestionMaster ? (
           answering ? (
             <div className="qm-panel">
               <div className="qm-name">{answering.username}</div>
-              <JudgeControls onJudge={judge} />
+              <JudgeControls onJudge={onJudge} />
             </div>
           ) : (
             <div className="buzz-idle">
               <div className="buzz-idle-text">Waiting for a buzz…</div>
-              <button className="small" onClick={() => run(() => api.nextQuestion(id))}>
-                Skip this question
-              </button>
             </div>
           )
+        ) : !me.isParticipant ? (
+          <button className="buzz join" onClick={() => run(() => api.joinEvent(id))}>
+            <span className="buzz-word">JOIN IN</span>
+            <span className="buzz-sub">You are watching. Tap to play.</span>
+          </button>
         ) : answering ? (
           // The button shows whoever got in first, but it still takes your buzz
           // so you can take your place in the queue behind them.
           <button
-            className={`buzzed${answering.userId === me.userId ? ' mine' : ''}`}
-            disabled={!me.isParticipant || me.hasBuzzed}
+            className={`buzzed${mine ? ' mine' : ''}`}
+            disabled={me.hasBuzzed}
             onClick={buzz}
           >
             <div className="buzz-name">{answering.username}</div>
             <div className="buzz-sub">
-              {answering.userId === me.userId
-                ? 'You buzzed first'
+              {mine
+                ? 'Your answer — go!'
                 : me.hasBuzzed
                   ? `is answering · you are ${ordinal(myPlaceInQueue)} in the queue`
                   : 'is answering · tap to join the queue'}
             </div>
           </button>
         ) : (
-          <button className="buzz" disabled={!me.isParticipant} onClick={buzz}>
-            BUZZ!
-          </button>
-        )}
-      </div>
-
-      <div className="board-half">
-        <Scoreboard state={state} />
-        {waiting.length > 0 && (
-          <div className="queue">
-            Next up: {waiting.map((b) => b.username).join(', ')}
-          </div>
-        )}
-        {me.isQuestionMaster && (
-          <button className="small danger finish" onClick={() => run(() => api.finishEvent(id))}>
-            Finish the quiz
+          <button className={`buzz${buzzPending ? ' pending' : ''}`} onClick={buzz}>
+            <span className="buzz-word">BUZZ!</span>
+            {buzzPending && <span className="buzz-sub">sent…</span>}
           </button>
         )}
       </div>

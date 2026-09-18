@@ -16,10 +16,23 @@ decline applications, make other members admin, step admins back down, and
 remove members. Anyone can leave, and a group can never be left without an
 admin.
 
-**Still to come** — events, the question master, the BUZZ screen and live
-scoring. The database already has tables for all of it (see
-`server/src/lib/schema.ts`), and the realtime socket is wired up and
-authenticating, so that work slots in on top of this.
+**Quiz nights** — group admins plan an event, members join it, and one of them
+is made question master. The admin starts it when everyone is in the room.
+
+**The live screen** — the scoreboard fills the top half and the BUZZ! button the
+bottom half, where a thumb already is when the phone is held in one hand. The
+board shows five rows — you, and two people either side — as place, name and
+score. The first buzz takes the floor and everyone's button turns into that
+person's name; tapping it again puts you in the queue behind them. The question
+master gets that name across the top half and +1 / 0 / -1 across the bottom.
++1 ends the question and resets everyone; 0 and -1 pass the floor to the next
+person who buzzed. Every screen updates over a websocket as it happens.
+
+It is built for a loud room: the phone vibrates when your tap lands and again
+when the floor is yours, the button says so the moment a buzz is sent rather
+than waiting on the server, and the screen tells you when it has lost its
+connection instead of showing a scoreboard that is quietly out of date. Add it
+to your home screen and it opens without an address bar.
 
 ## Running it
 
@@ -66,6 +79,37 @@ It is created and migrated on startup, so there is no separate setup step.
 | `PORT` | `3001` | API port |
 | `DATABASE_FILE` | `server/data/quizbuzz.sqlite` | SQLite file |
 | `JWT_SECRET` | generated in dev | **Required in production**, 16+ characters |
+| `NODE_ENV` | unset | Set to `production` when deployed |
+
+Without a valid `JWT_SECRET`, a production server exits on startup rather than
+starting up healthy and failing on the first person who tries to sign in.
+
+## Putting it online
+
+The app is one always-on Node process with a SQLite file next to it, so it needs
+a host that gives it **Node 22 or newer**, **a persistent disk**, **websockets**,
+and **exactly one instance** — the buzz queue and the database both live inside
+that single process, so a second instance would be a second, different quiz.
+
+[Fly.io](https://fly.io) fits all four. `Dockerfile` and `fly.toml` here are set
+up for it: one 256MB machine in London that never sleeps, with a 1GB volume
+mounted at `/data` holding the database.
+
+```bash
+fly auth signup                       # or: fly auth login
+fly launch --copy-config --no-deploy  # keeps the fly.toml in this repo
+fly volumes create quizbuzz_data --size 1
+fly secrets set JWT_SECRET="$(openssl rand -hex 32)"
+fly deploy
+```
+
+`fly launch` will pick a unique name if `quizbuzz` is taken, and the app is then
+live at `https://<name>.fly.dev` — that is the link to give people in the pub.
+
+Any host meeting those four requirements works the same way. The one thing to
+watch for is a free tier that sleeps after a few minutes idle: the first person
+to open the link then waits out a cold start, which is a poor way to begin a
+quiz night.
 
 ### API
 
@@ -83,5 +127,15 @@ It is created and migrated on startup, so there is no separate setup step.
 | `POST /api/groups/:id/members/:userId/approve` | Admin: let someone in. |
 | `POST /api/groups/:id/members/:userId/role` | Admin: make admin, or step one down. |
 | `DELETE /api/groups/:id/members/:userId` | Admin: remove or decline. Anyone: leave. |
+| `GET /api/groups/:id/events` | The group's quiz nights. |
+| `POST /api/groups/:id/events` | Admin: plan a quiz night. |
+| `GET /api/events/:id` | The whole live picture: queue, scores, who is who. |
+| `POST /api/events/:id/join` | Join a quiz. `DELETE` to drop out. |
+| `POST /api/events/:id/question-master` | Admin: hand someone the QM screen. |
+| `POST /api/events/:id/start` | Go live and open the first question. |
+| `POST /api/events/:id/finish` | Call it a night. |
+| `POST /api/events/:id/buzz` | Buzz in. The app uses the socket instead. |
+| `POST /api/events/:id/judge` | QM: `+1`, `0` or `-1` for whoever is answering. |
+| `POST /api/events/:id/next-question` | QM: give up on this one, move everyone on. |
 
 Every route except register and login needs `Authorization: Bearer <token>`.

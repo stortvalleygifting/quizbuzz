@@ -1,34 +1,68 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type EventState } from './api';
 import { getSocket } from './socket';
+import { TAP, vibrate } from './haptics';
+
+/** How long the button admits to having sent a buzz before it gives up waiting. */
+const PENDING_TIMEOUT_MS = 3000;
 
 /**
  * Keeps one event's state live.
  *
  * The socket is the source of truth once it is up; the initial fetch just
  * means the screen has something to draw before the first push lands.
+ *
+ * Two things here exist purely for playing on a phone on pub wifi. `connected`
+ * lets the screen admit when it is out of touch rather than showing a stale
+ * scoreboard as though it were current, and `buzzPending` gives the button
+ * something to say in the few hundred milliseconds between the tap and the
+ * server's answer — without it people tap again and again, convinced it missed.
  */
 export function useEventState(eventId: number) {
   const [state, setState] = useState<EventState | null>(null);
   const [error, setError] = useState('');
+  const [connected, setConnected] = useState(false);
+  const [buzzPending, setBuzzPending] = useState(false);
   const latest = useRef(0);
+  const pendingTimer = useRef<ReturnType<typeof setTimeout>>();
+
+  const settle = useCallback(() => {
+    clearTimeout(pendingTimer.current);
+    setBuzzPending(false);
+  }, []);
 
   useEffect(() => {
     let live = true;
     const socket = getSocket();
 
     const onState = (s: EventState) => {
-      if (live && s.event.id === eventId) setState(s);
+      if (!live || s.event.id !== eventId) return;
+      setState(s);
+      // Any push that arrives after a buzz already accounts for it.
+      settle();
     };
     const onError = (e: { error: string }) => {
-      if (live) setError(e.error);
+      if (!live) return;
+      setError(e.error);
+      settle();
     };
     const watch = () => socket.emit('event:watch', { eventId });
+    const onConnect = () => {
+      if (!live) return;
+      setConnected(true);
+      watch();
+    };
+    const onDisconnect = () => {
+      if (!live) return;
+      setConnected(false);
+      settle();
+    };
 
     socket.on('event:state', onState);
     socket.on('event:error', onError);
-    socket.on('connect', watch);
-    if (socket.connected) watch();
+    socket.on('connect', onConnect);
+    socket.on('disconnect', onDisconnect);
+    if (socket.connected) onConnect();
     else socket.connect();
 
     const stamp = ++latest.current;
@@ -42,15 +76,21 @@ export function useEventState(eventId: number) {
 
     return () => {
       live = false;
+      clearTimeout(pendingTimer.current);
       socket.emit('event:leave', { eventId });
       socket.off('event:state', onState);
       socket.off('event:error', onError);
-      socket.off('connect', watch);
+      socket.off('connect', onConnect);
+      socket.off('disconnect', onDisconnect);
     };
-  }, [eventId]);
+  }, [eventId, settle]);
 
   const buzz = useCallback(() => {
     setError('');
+    vibrate(TAP);
+    setBuzzPending(true);
+    clearTimeout(pendingTimer.current);
+    pendingTimer.current = setTimeout(() => setBuzzPending(false), PENDING_TIMEOUT_MS);
     getSocket().emit('event:buzz', { eventId });
   }, [eventId]);
 
@@ -73,5 +113,5 @@ export function useEventState(eventId: number) {
     }
   }, []);
 
-  return { state, error, setError, buzz, judge, run };
+  return { state, error, setError, connected, buzzPending, buzz, judge, run };
 }

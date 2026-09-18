@@ -34,6 +34,15 @@ function loadSecret(): string {
 let cachedSecret: string | null = null;
 const secret = (): string => (cachedSecret ??= loadSecret());
 
+/**
+ * Forces the signing secret to be resolved now rather than on the first login.
+ *
+ * Called at startup so a production deploy with no JWT_SECRET dies immediately
+ * and visibly, instead of passing its health check and then failing on the
+ * first person who tries to sign in — halfway through a quiz night.
+ */
+export const assertAuthConfigured = (): void => void secret();
+
 export const hashPassword = (plain: string): Promise<string> => bcrypt.hash(plain, BCRYPT_ROUNDS);
 
 export const verifyPassword = (plain: string, hash: string): Promise<boolean> =>
