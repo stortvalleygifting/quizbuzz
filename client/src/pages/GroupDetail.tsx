@@ -196,8 +196,15 @@ export default function GroupDetail() {
                 <div className="row" key={m.id}>
                   <div className="grow">
                     <div className="name">
-                      {m.username}
-                      {isMe && <span className="sub"> (you)</span>}
+                      {isMe ? (
+                        <>
+                          {m.username}
+                          <span className="sub"> (you)</span>
+                        </>
+                      ) : (
+                        // Tapping someone's name opens your record against them.
+                        <Link to={`/groups/${id}/vs/${m.id}`}>{m.username}</Link>
+                      )}
                     </div>
                   </div>
                   {m.role === 'admin' && <span className="pill admin">Admin</span>}

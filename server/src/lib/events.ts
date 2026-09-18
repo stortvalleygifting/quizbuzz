@@ -350,3 +350,103 @@ export function assertCanBeQuestionMaster(db: DB, event: EventRow, userId: numbe
     throw conflict('That person has not joined the event yet.', 'not_joined');
   }
 }
+
+// ----------------------------------------------------------- head to head --
+
+export interface HeadToHead {
+  opponent: { id: number; username: string };
+  /** Finished quizzes in this group that both of you actually played. */
+  quizzes: { played: number; won: number; lost: number; drawn: number };
+  /** Questions where you both buzzed, and who got there first. */
+  buzzer: { contested: number; youFirst: number; themFirst: number };
+  meetings: {
+    eventId: number;
+    name: string;
+    yourScore: number;
+    theirScore: number;
+    result: 'won' | 'lost' | 'drawn';
+    endedAt: string | null;
+  }[];
+}
+
+/**
+ * How two members of a group have fared against each other.
+ *
+ * A quiz only counts once it has finished and both of you were playing it.
+ * Whoever ran a quiz is left out of its result, since the question master has
+ * no score of their own to compare.
+ */
+export function getHeadToHead(db: DB, groupId: number, meId: number, themId: number): HeadToHead {
+  const them = db.prepare('SELECT id, username FROM users WHERE id = ?').get(themId) as
+    | { id: number; username: string }
+    | undefined;
+  if (!them) throw notFound('That person no longer has an account.');
+
+  const rows = db
+    .prepare(
+      `SELECT e.id, e.name, e.ended_at, mine.score AS my_score, theirs.score AS their_score
+         FROM events e
+         JOIN event_participants mine   ON mine.event_id   = e.id AND mine.user_id   = @me
+         JOIN event_participants theirs ON theirs.event_id = e.id AND theirs.user_id = @them
+        WHERE e.group_id = @group
+          AND e.status = 'finished'
+          AND e.question_master_id IS NOT @me
+          AND e.question_master_id IS NOT @them
+        ORDER BY e.ended_at DESC, e.id DESC`,
+    )
+    .all({ group: groupId, me: meId, them: themId }) as unknown as {
+    id: number;
+    name: string;
+    ended_at: string | null;
+    my_score: number;
+    their_score: number;
+  }[];
+
+  const meetings = rows.map((r) => ({
+    eventId: r.id,
+    name: r.name,
+    yourScore: r.my_score,
+    theirScore: r.their_score,
+    result: (r.my_score > r.their_score ? 'won' : r.my_score < r.their_score ? 'lost' : 'drawn') as
+      | 'won'
+      | 'lost'
+      | 'drawn',
+    endedAt: r.ended_at,
+  }));
+
+  // Every question you both buzzed on, whatever became of the quiz: the lower
+  // sequence number got there first.
+  const race = db
+    .prepare(
+      `SELECT
+         SUM(CASE WHEN mine.seq < theirs.seq THEN 1 ELSE 0 END) AS you_first,
+         SUM(CASE WHEN mine.seq > theirs.seq THEN 1 ELSE 0 END) AS them_first,
+         COUNT(*) AS contested
+       FROM questions q
+       JOIN events e ON e.id = q.event_id
+       JOIN buzzes mine   ON mine.question_id   = q.id AND mine.user_id   = @me
+       JOIN buzzes theirs ON theirs.question_id = q.id AND theirs.user_id = @them
+      WHERE e.group_id = @group`,
+    )
+    .get({ group: groupId, me: meId, them: themId }) as unknown as {
+    you_first: number | null;
+    them_first: number | null;
+    contested: number;
+  };
+
+  return {
+    opponent: { id: them.id, username: them.username },
+    quizzes: {
+      played: meetings.length,
+      won: meetings.filter((m) => m.result === 'won').length,
+      lost: meetings.filter((m) => m.result === 'lost').length,
+      drawn: meetings.filter((m) => m.result === 'drawn').length,
+    },
+    buzzer: {
+      contested: race.contested ?? 0,
+      youFirst: race.you_first ?? 0,
+      themFirst: race.them_first ?? 0,
+    },
+    meetings,
+  };
+}

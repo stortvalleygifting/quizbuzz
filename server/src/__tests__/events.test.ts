@@ -325,6 +325,78 @@ describe('the scoreboard', () => {
     ]);
   });
 
+  it('re-opens a finished quiz with the scores intact', async () => {
+    const { eventId, owner, players } = await liveEvent(['ann', 'bob']);
+    const [ann] = players;
+
+    await buzz(eventId, ann.token);
+    await judge(eventId, owner.token, 1);
+    await request(app).post(`/api/events/${eventId}/finish`).set(auth(owner.token));
+
+    const reopened = await request(app).post(`/api/events/${eventId}/reopen`).set(auth(owner.token));
+    expect(reopened.status).toBe(200);
+    expect(reopened.body.state.event.status).toBe('live');
+    expect(reopened.body.state.question).not.toBeNull();
+    expect(reopened.body.state.leaderboard.find((e: { username: string }) => e.username === 'ann').score).toBe(1);
+
+    // Play carries on from where it stopped, and the question numbering with it.
+    expect((await buzz(eventId, ann.token)).status).toBe(200);
+    await judge(eventId, owner.token, 1);
+    expect((await state(eventId, ann.token)).leaderboard.find((e: { username: string }) => e.username === 'ann').score).toBe(2);
+  });
+
+  it('lets a group admin re-open it too, but nobody else', async () => {
+    const { eventId, owner, players } = await liveEvent(['ann', 'bob']);
+    // Hand the question master's screen to ann, so owner is admin-but-not-QM.
+    await request(app)
+      .post(`/api/events/${eventId}/question-master`)
+      .set(auth(owner.token))
+      .send({ userId: players[0].id });
+    await request(app).post(`/api/events/${eventId}/finish`).set(auth(players[0].token));
+
+    const byPlayer = await request(app).post(`/api/events/${eventId}/reopen`).set(auth(players[1].token));
+    expect(byPlayer.status).toBe(403);
+
+    const byAdmin = await request(app).post(`/api/events/${eventId}/reopen`).set(auth(owner.token));
+    expect(byAdmin.status).toBe(200);
+    expect(byAdmin.body.state.event.status).toBe('live');
+  });
+
+  it('shrugs off re-opening a quiz that is already running, and refuses one never started', async () => {
+    const { eventId, owner } = await liveEvent(['ann']);
+
+    const alreadyLive = await request(app).post(`/api/events/${eventId}/reopen`).set(auth(owner.token));
+    expect(alreadyLive.status).toBe(200);
+    expect(alreadyLive.body.state.event.status).toBe('live');
+
+    const scheduled = (
+      await request(app)
+        .post(`/api/groups/${alreadyLive.body.state.event.groupId}/events`)
+        .set(auth(owner.token))
+        .send({ name: 'Next week' })
+    ).body.event.id;
+    const notStarted = await request(app).post(`/api/events/${scheduled}/reopen`).set(auth(owner.token));
+    expect(notStarted.status).toBe(400);
+    expect(notStarted.body.code).toBe('not_finished');
+  });
+
+  it('lets people join a re-opened quiz again', async () => {
+    const { eventId, owner, groupId } = await liveEvent(['ann']);
+    await request(app).post(`/api/events/${eventId}/finish`).set(auth(owner.token));
+
+    const latecomer = await register('latecomer');
+    await request(app).post(`/api/groups/${groupId}/apply`).set(auth(latecomer.token));
+    await request(app).post(`/api/groups/${groupId}/members/${latecomer.id}/approve`).set(auth(owner.token));
+
+    const tooLate = await request(app).post(`/api/events/${eventId}/join`).set(auth(latecomer.token));
+    expect(tooLate.status).toBe(400);
+
+    await request(app).post(`/api/events/${eventId}/reopen`).set(auth(owner.token));
+    const joined = await request(app).post(`/api/events/${eventId}/join`).set(auth(latecomer.token));
+    expect(joined.status).toBe(200);
+    expect(joined.body.state.me.isParticipant).toBe(true);
+  });
+
   it('finishes an event and stops the buzzers', async () => {
     const { eventId, owner, players } = await liveEvent(['ann']);
     const finished = await request(app).post(`/api/events/${eventId}/finish`).set(auth(owner.token));
@@ -334,5 +406,132 @@ describe('the scoreboard', () => {
 
     const late = await buzz(eventId, players[0].token);
     expect(late.status).toBe(400);
+  });
+});
+
+describe('head to head', () => {
+  /** Runs one question: `first` buzzes, then `second`, and the master judges. */
+  async function question(
+    eventId: number,
+    master: Player,
+    first: Player,
+    second: Player | null,
+    delta: number,
+  ) {
+    await buzz(eventId, first.token);
+    if (second) await buzz(eventId, second.token);
+    await judge(eventId, master.token, delta);
+  }
+
+  it('counts quizzes won, lost and drawn, and who got to the buzzer first', async () => {
+    const { eventId, owner, groupId, players } = await liveEvent(['ann', 'bob']);
+    const [ann, bob] = players;
+
+    // Quiz one: both buzz on every question, ann first each time, ann wins 2-0.
+    await question(eventId, owner, ann, bob, 1);
+    await question(eventId, owner, ann, bob, 1);
+    await request(app).post(`/api/events/${eventId}/finish`).set(auth(owner.token));
+
+    // Quiz two: bob gets to the buzzer first twice and wins it.
+    const second = (
+      await request(app).post(`/api/groups/${groupId}/events`).set(auth(owner.token)).send({ name: 'Week two' })
+    ).body.event.id;
+    for (const p of players) await request(app).post(`/api/events/${second}/join`).set(auth(p.token));
+    await request(app).post(`/api/events/${second}/question-master`).set(auth(owner.token)).send({ userId: owner.id });
+    await request(app).post(`/api/events/${second}/start`).set(auth(owner.token));
+    await question(second, owner, bob, ann, 1);
+    await question(second, owner, bob, ann, 1);
+    await request(app).post(`/api/events/${second}/finish`).set(auth(owner.token));
+
+    const annView = await request(app).get(`/api/groups/${groupId}/head-to-head/${bob.id}`).set(auth(ann.token));
+    expect(annView.status).toBe(200);
+    expect(annView.body.headToHead.opponent.username).toBe('bob');
+    expect(annView.body.headToHead.quizzes).toEqual({ played: 2, won: 1, lost: 1, drawn: 0 });
+    expect(annView.body.headToHead.buzzer).toEqual({ contested: 4, youFirst: 2, themFirst: 2 });
+
+    // Bob's view is the mirror image.
+    const bobView = await request(app).get(`/api/groups/${groupId}/head-to-head/${ann.id}`).set(auth(bob.token));
+    expect(bobView.body.headToHead.quizzes).toEqual({ played: 2, won: 1, lost: 1, drawn: 0 });
+    expect(bobView.body.headToHead.buzzer).toEqual({ contested: 4, youFirst: 2, themFirst: 2 });
+    expect(bobView.body.headToHead.meetings.map((m: { result: string }) => m.result).sort()).toEqual(['lost', 'won']);
+  });
+
+  it('counts a level quiz as a draw', async () => {
+    const { eventId, owner, groupId, players } = await liveEvent(['ann', 'bob']);
+    const [ann, bob] = players;
+
+    await question(eventId, owner, ann, null, 1);
+    await question(eventId, owner, bob, null, 1);
+    await request(app).post(`/api/events/${eventId}/finish`).set(auth(owner.token));
+
+    const view = await request(app).get(`/api/groups/${groupId}/head-to-head/${bob.id}`).set(auth(ann.token));
+    expect(view.body.headToHead.quizzes).toEqual({ played: 1, won: 0, lost: 0, drawn: 1 });
+    // They never buzzed on the same question, so there was no race.
+    expect(view.body.headToHead.buzzer.contested).toBe(0);
+  });
+
+  it('leaves out quizzes that are still going, and ones either of you ran', async () => {
+    const { eventId, owner, groupId, players } = await liveEvent(['ann', 'bob']);
+    const [ann, bob] = players;
+
+    // A quiz in progress does not count yet.
+    await question(eventId, owner, ann, bob, 1);
+    const during = await request(app).get(`/api/groups/${groupId}/head-to-head/${bob.id}`).set(auth(ann.token));
+    expect(during.body.headToHead.quizzes.played).toBe(0);
+    // The buzzer race counts all the same, finished or not.
+    expect(during.body.headToHead.buzzer).toEqual({ contested: 1, youFirst: 1, themFirst: 0 });
+
+    // A quiz ann ran herself does not count either, even once finished.
+    const hers = (
+      await request(app).post(`/api/groups/${groupId}/events`).set(auth(owner.token)).send({ name: "Ann's night" })
+    ).body.event.id;
+    for (const p of players) await request(app).post(`/api/events/${hers}/join`).set(auth(p.token));
+    await request(app).post(`/api/events/${hers}/question-master`).set(auth(owner.token)).send({ userId: ann.id });
+    await request(app).post(`/api/events/${hers}/start`).set(auth(ann.token));
+    await request(app).post(`/api/events/${hers}/finish`).set(auth(ann.token));
+
+    const after = await request(app).get(`/api/groups/${groupId}/head-to-head/${bob.id}`).set(auth(ann.token));
+    expect(after.body.headToHead.quizzes.played).toBe(0);
+  });
+
+  it('keeps each group’s record to itself', async () => {
+    const { eventId, owner, groupId, players } = await liveEvent(['ann', 'bob']);
+    const [ann, bob] = players;
+    await question(eventId, owner, ann, bob, 1);
+    await request(app).post(`/api/events/${eventId}/finish`).set(auth(owner.token));
+
+    // The same two people in a different group start from nothing.
+    const other = (await request(app).post('/api/groups').set(auth(owner.token)).send({ name: 'Other pub' })).body.group
+      .id;
+    for (const p of players) {
+      await request(app).post(`/api/groups/${other}/apply`).set(auth(p.token));
+      await request(app).post(`/api/groups/${other}/members/${p.id}/approve`).set(auth(owner.token));
+    }
+
+    const here = await request(app).get(`/api/groups/${groupId}/head-to-head/${bob.id}`).set(auth(ann.token));
+    expect(here.body.headToHead.quizzes.played).toBe(1);
+    const there = await request(app).get(`/api/groups/${other}/head-to-head/${bob.id}`).set(auth(ann.token));
+    expect(there.body.headToHead.quizzes.played).toBe(0);
+    expect(there.body.headToHead.buzzer.contested).toBe(0);
+  });
+
+  it('refuses outsiders, strangers and yourself', async () => {
+    const { groupId, players } = await liveEvent(['ann', 'bob']);
+    const [ann, bob] = players;
+
+    const outsider = await register('outsider');
+    const byOutsider = await request(app)
+      .get(`/api/groups/${groupId}/head-to-head/${bob.id}`)
+      .set(auth(outsider.token));
+    expect(byOutsider.status).toBe(403);
+
+    const aboutOutsider = await request(app)
+      .get(`/api/groups/${groupId}/head-to-head/${outsider.id}`)
+      .set(auth(ann.token));
+    expect(aboutOutsider.status).toBe(404);
+
+    const myself = await request(app).get(`/api/groups/${groupId}/head-to-head/${ann.id}`).set(auth(ann.token));
+    expect(myself.status).toBe(400);
+    expect(myself.body.code).toBe('self');
   });
 });

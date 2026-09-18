@@ -3,12 +3,13 @@ import { z } from 'zod';
 import { getDb, transaction } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
 import { asyncHandler } from '../lib/async.js';
-import { badRequest, conflict } from '../lib/errors.js';
+import { badRequest, conflict, notFound } from '../lib/errors.js';
 import { parseBody, parseId } from '../lib/validation.js';
-import { getGroup, requireAdmin, requireMember } from '../lib/groups.js';
+import { getGroup, getMembership, requireAdmin, requireMember } from '../lib/groups.js';
 import {
   assertCanBeQuestionMaster,
   buildState,
+  getHeadToHead,
   getEvent,
   isParticipant,
   judgeAnswer,
@@ -77,6 +78,25 @@ eventsRouter.get(
       )
       .all(groupId) as { id: number }[];
     res.json({ events: rows.map((r) => summarize(r.id, me)) });
+  }),
+);
+
+/** How you and another member of the group have fared against each other. */
+eventsRouter.get(
+  '/groups/:groupId/head-to-head/:userId',
+  asyncHandler(async (req, res) => {
+    const groupId = parseId(req.params.groupId, 'group');
+    const themId = parseId(req.params.userId, 'member');
+    const me = req.user!.uid;
+    const db = getDb();
+    getGroup(db, groupId);
+    requireMember(db, groupId, me);
+    if (themId === me) throw badRequest('That is you.', 'self');
+    if (getMembership(db, groupId, themId)?.status !== 'approved') {
+      throw notFound('That person is not in this group.');
+    }
+
+    res.json({ headToHead: getHeadToHead(db, groupId, me, themId) });
   }),
 );
 
@@ -209,6 +229,40 @@ eventsRouter.post(
       db.prepare(
         `UPDATE events SET status = 'finished', ended_at = datetime('now'), current_question_id = NULL WHERE id = ?`,
       ).run(eventId);
+    });
+
+    await broadcastEvent(eventId);
+    res.json({ state: buildState(db, eventId, me) });
+  }),
+);
+
+/**
+ * Question master or admin: bring a finished quiz back to life.
+ *
+ * Scores, the people playing and the questions already asked all stay as they
+ * were, and a fresh question opens so the next buzz counts — a quiz ended by a
+ * mistimed tap picks up where it left off.
+ */
+eventsRouter.post(
+  '/events/:eventId/reopen',
+  asyncHandler(async (req, res) => {
+    const eventId = parseId(req.params.eventId, 'event');
+    const me = req.user!.uid;
+    const db = getDb();
+    const event = getEvent(db, eventId);
+    if (event.question_master_id !== me) requireEventAdmin(db, event, me);
+
+    if (event.status === 'live') return res.json({ state: buildState(db, eventId, me) });
+    if (event.status !== 'finished') {
+      throw badRequest('That quiz has not finished, so there is nothing to re-open.', 'not_finished');
+    }
+    if (!event.question_master_id) {
+      throw badRequest('Pick a question master before you re-open this.', 'no_question_master');
+    }
+
+    transaction(db, () => {
+      db.prepare(`UPDATE events SET status = 'live', ended_at = NULL WHERE id = ?`).run(eventId);
+      openNextQuestion(db, eventId);
     });
 
     await broadcastEvent(eventId);
