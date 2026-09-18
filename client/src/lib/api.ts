@@ -1,6 +1,8 @@
 export interface User {
   id: number;
   username: string;
+  /** When the account was registered, UTC ISO 8601. */
+  signedUpAt: string;
 }
 
 export interface GroupSummary {

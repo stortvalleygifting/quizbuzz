@@ -44,6 +44,10 @@ body {
 .topbar h1 { font-size: 20px; margin: 0; flex: 1; }
 .topbar .who { color: var(--muted); font-size: 13px; }
 
+/* Its own row rather than a second line in the topbar, which squeezed the
+   heading onto two lines on a narrow phone. */
+.since { color: var(--muted); font-size: 13px; margin: -8px 0 14px; }
+
 .card {
   background: var(--surface);
   border: 1px solid var(--line);

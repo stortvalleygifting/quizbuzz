@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import type { Express } from 'express';
 import { openDatabase, setDb } from '../lib/db.js';
+import { signToken } from '../lib/auth.js';
 import { createApp } from '../app.js';
 
 let app: Express;
@@ -70,6 +71,50 @@ describe('accounts', () => {
     const { token } = await register('quizzer');
     const me = await request(app).get('/api/auth/me').set(auth(token));
     expect(JSON.stringify(me.body)).not.toMatch(/hash|\$2[aby]\$/);
+  });
+
+  it('records a signup date and reports the same one everywhere', async () => {
+    const before = Date.now() - 1000;
+    const reg = await request(app)
+      .post('/api/auth/register')
+      .send({ username: 'quizzer', password: 'hunter2hunter2' });
+
+    const signedUpAt = reg.body.user.signedUpAt as string;
+    expect(signedUpAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+    // Parsed as UTC, not as the reader's local time.
+    const stamped = new Date(signedUpAt).getTime();
+    expect(stamped).toBeGreaterThanOrEqual(before);
+    expect(stamped).toBeLessThanOrEqual(Date.now() + 1000);
+
+    const login = await request(app)
+      .post('/api/auth/login')
+      .send({ username: 'quizzer', password: 'hunter2hunter2' });
+    const me = await request(app).get('/api/auth/me').set(auth(reg.body.token));
+
+    // Signing in again must not look like signing up again.
+    expect(login.body.user.signedUpAt).toBe(signedUpAt);
+    expect(me.body.user.signedUpAt).toBe(signedUpAt);
+  });
+});
+
+describe('signup dates already in the database', () => {
+  it('stamps a row written before this change as UTC', async () => {
+    const db = openDatabase(':memory:');
+    setDb(db);
+    app = createApp();
+
+    // An account from Rob's existing database: SQLite's datetime('now') format,
+    // no timezone marker.
+    db.prepare("INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)").run(
+      'earlybird',
+      'not-a-real-hash',
+      '2026-09-14 09:30:00',
+    );
+    const token = signToken({ uid: 1, username: 'earlybird' });
+
+    const me = await request(app).get('/api/auth/me').set(auth(token));
+    expect(me.status).toBe(200);
+    expect(me.body.user.signedUpAt).toBe('2026-09-14T09:30:00Z');
   });
 });
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { api, type GroupSummary } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { formatSignupDate } from '../lib/dates';
 
 export default function Groups() {
   const { user, signOut } = useAuth();
@@ -74,6 +75,8 @@ export default function Groups() {
           Sign out
         </button>
       </div>
+
+      {user?.signedUpAt && <div className="since">Member since {formatSignupDate(user.signedUpAt)}</div>}
 
       {error && <div className="error">{error}</div>}
 

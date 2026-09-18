@@ -10,6 +10,9 @@ PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
 -- ---------------------------------------------------------------- accounts --
+-- created_at is the signup date, set once when the account is registered and
+-- never rewritten. It is what a free-first-month offer would be honoured
+-- against, so nothing should backdate or clear it.
 CREATE TABLE IF NOT EXISTS users (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   username      TEXT NOT NULL COLLATE NOCASE UNIQUE,
