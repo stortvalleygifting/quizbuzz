@@ -105,10 +105,21 @@ set up for it: one 256MB machine that never sleeps, with a 1GB volume mounted at
 `/data` holding the database. It costs roughly **$2 a month** — about $1.94 for
 the machine and 15 cents for the volume.
 
-First install flyctl, following
-[Fly's install page](https://fly.io/docs/flyctl/install/) — on Windows that is
-one PowerShell line, on macOS and Linux one shell line. Then, from the root of
-this repo:
+First install flyctl. On Windows, in PowerShell:
+
+```powershell
+pwsh -Command "iwr https://fly.io/install.ps1 -useb | iex"
+```
+
+If that says `pwsh` is not found, put `powershell` in its place. For macOS and
+Linux, see [Fly's install page](https://fly.io/docs/flyctl/install/).
+
+It installs to `~/.fly` and adds that to your PATH — but a terminal you already
+had open will not pick the change up, so open a new one and check `fly version`
+works before going on. To avoid reopening, add it to the window you have:
+`$env:PATH += ";$HOME\.fly\bin"`.
+
+Then, from the root of this repo:
 
 ```bash
 fly auth signup           # or `fly auth login` if you already have an account
