@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api, getToken, setToken, type User } from './api';
+import { closeSocket } from './socket';
 
 interface AuthValue {
   user: User | null;
@@ -39,6 +40,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signIn: async (u, p) => adopt(await api.login(u, p)),
       signUp: async (u, p) => adopt(await api.register(u, p)),
       signOut: () => {
+        // Drop the socket too, so it doesn't reconnect with the old token.
+        closeSocket();
         setToken(null);
         setUser(null);
       },
