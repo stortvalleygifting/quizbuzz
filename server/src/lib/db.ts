@@ -15,10 +15,8 @@ export function openDatabase(file: string): DB {
   if (file !== ':memory:') mkdirSync(dirname(resolve(file)), { recursive: true });
   const db = new DatabaseSync(file);
   db.exec('PRAGMA foreign_keys = ON');
-  // A quiz writes constantly — every buzz and every score. Write-ahead logging
-  // keeps those writes from blocking the reads that build everyone's screen,
-  // and leaves the file recoverable if the host restarts mid-question.
-  if (file !== ':memory:') db.exec('PRAGMA journal_mode = WAL');
+  // SCHEMA_SQL sets journal_mode = WAL, which is what keeps a quiz's constant
+  // buzz and score writes from blocking the reads that build everyone's screen.
   db.exec(SCHEMA_SQL);
   return db;
 }
