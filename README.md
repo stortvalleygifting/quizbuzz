@@ -17,22 +17,31 @@ remove members. Anyone can leave, and a group can never be left without an
 admin.
 
 **Quiz nights** — group admins plan an event, members join it, and one of them
-is made question master. The admin starts it when everyone is in the room.
+is named question master. A finished quiz can be re-opened by the question
+master or an admin, with the scores and the questions already asked intact.
 
-**The live screen** — the scoreboard fills the top half and the BUZZ! button the
-bottom half, where a thumb already is when the phone is held in one hand. The
-board shows five rows — you, and two people either side — as place, name and
-score. The first buzz takes the floor and everyone's button turns into that
-person's name; tapping it again puts you in the queue behind them. The question
-master gets that name across the top half and +1 / 0 / -1 across the bottom.
-+1 ends the question and resets everyone; 0 and -1 pass the floor to the next
-person who buzzed. Every screen updates over a websocket as it happens.
+**The buzzer** — once a quiz is live the screen splits in half: the scoreboard
+on top, showing you and two people either side by place, name and score, and
+the BUZZ! button filling the bottom half, where a thumb already is when the
+phone is held in one hand. Everyone's button changes to whoever buzzed first,
+and stays tappable so people behind them take their place in the queue. The
+question master sees that name across the top of their half with +1 / 0 / -1
+underneath: +1 scores and clears the queue for the next question, while 0 and
+-1 hand the floor to the next person who buzzed. Every change is pushed to
+every screen over Socket.IO.
 
 It is built for a loud room: the phone vibrates when your tap lands and again
 when the floor is yours, the button says so the moment a buzz is sent rather
 than waiting on the server, and the screen tells you when it has lost its
 connection instead of showing a scoreboard that is quietly out of date. Add it
 to your home screen and it opens without an address bar.
+
+**Head to head** — tapping another member's name in a group shows your record
+against them: quizzes won, drawn and lost, and who reached the buzzer first on
+the questions you both buzzed on.
+
+**Still to come** — putting it somewhere people can play it from outside the
+house. See "Putting it online" below for what that takes.
 
 ## Running it
 
@@ -127,15 +136,23 @@ quiz night.
 | `POST /api/groups/:id/members/:userId/approve` | Admin: let someone in. |
 | `POST /api/groups/:id/members/:userId/role` | Admin: make admin, or step one down. |
 | `DELETE /api/groups/:id/members/:userId` | Admin: remove or decline. Anyone: leave. |
+| `GET /api/groups/:id/head-to-head/:userId` | Your record against another member. |
 | `GET /api/groups/:id/events` | The group's quiz nights. |
 | `POST /api/groups/:id/events` | Admin: plan a quiz night. |
-| `GET /api/events/:id` | The whole live picture: queue, scores, who is who. |
-| `POST /api/events/:id/join` | Join a quiz. `DELETE` to drop out. |
-| `POST /api/events/:id/question-master` | Admin: hand someone the QM screen. |
+| `GET /api/events/:id` | The whole live picture: players, queue, scores. |
+| `POST /api/events/:id/join` | Join a quiz. |
+| `DELETE /api/events/:id/join` | Drop out. |
+| `POST /api/events/:id/question-master` | Admin: name the question master. |
 | `POST /api/events/:id/start` | Go live and open the first question. |
-| `POST /api/events/:id/finish` | Call it a night. |
-| `POST /api/events/:id/buzz` | Buzz in. The app uses the socket instead. |
-| `POST /api/events/:id/judge` | QM: `+1`, `0` or `-1` for whoever is answering. |
-| `POST /api/events/:id/next-question` | QM: give up on this one, move everyone on. |
+| `POST /api/events/:id/finish` | End the quiz. |
+| `POST /api/events/:id/reopen` | Bring a finished quiz back, scores intact. |
+| `POST /api/events/:id/buzz` | Buzz in. |
+| `POST /api/events/:id/judge` | Question master: `{ delta: 1 \| 0 \| -1 }`. |
+| `POST /api/events/:id/next-question` | Question master: abandon this question. |
 
 Every route except register and login needs `Authorization: Bearer <token>`.
+
+During a live quiz the app uses the socket rather than these last few routes, so
+a buzz is not waiting on an HTTP round trip. The socket takes `event:watch`,
+`event:buzz` and `event:judge`, and pushes `event:state` to every screen
+watching whenever anything changes.
