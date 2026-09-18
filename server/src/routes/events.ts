@@ -3,12 +3,13 @@ import { z } from 'zod';
 import { getDb, transaction } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
 import { asyncHandler } from '../lib/async.js';
-import { badRequest, conflict } from '../lib/errors.js';
+import { badRequest, conflict, notFound } from '../lib/errors.js';
 import { parseBody, parseId } from '../lib/validation.js';
-import { getGroup, requireAdmin, requireMember } from '../lib/groups.js';
+import { getGroup, getMembership, requireAdmin, requireMember } from '../lib/groups.js';
 import {
   assertCanBeQuestionMaster,
   buildState,
+  getHeadToHead,
   getEvent,
   isParticipant,
   judgeAnswer,
@@ -77,6 +78,25 @@ eventsRouter.get(
       )
       .all(groupId) as { id: number }[];
     res.json({ events: rows.map((r) => summarize(r.id, me)) });
+  }),
+);
+
+/** How you and another member of the group have fared against each other. */
+eventsRouter.get(
+  '/groups/:groupId/head-to-head/:userId',
+  asyncHandler(async (req, res) => {
+    const groupId = parseId(req.params.groupId, 'group');
+    const themId = parseId(req.params.userId, 'member');
+    const me = req.user!.uid;
+    const db = getDb();
+    getGroup(db, groupId);
+    requireMember(db, groupId, me);
+    if (themId === me) throw badRequest('That is you.', 'self');
+    if (getMembership(db, groupId, themId)?.status !== 'approved') {
+      throw notFound('That person is not in this group.');
+    }
+
+    res.json({ headToHead: getHeadToHead(db, groupId, me, themId) });
   }),
 );
 

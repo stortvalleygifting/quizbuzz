@@ -207,3 +207,16 @@ a { color: var(--accent-bright); }
 
 .queue { color: var(--muted); font-size: 13px; text-align: center; }
 .finish { align-self: center; }
+
+/* ---------------------------------------------------------- head to head -- */
+
+.tallies { display: flex; gap: 10px; }
+.tally { flex: 1; text-align: center; padding: 10px 4px; }
+.tally-value { font-size: 34px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.tally.good .tally-value { color: var(--good); }
+.tally.bad .tally-value { color: var(--bad); }
+.tally-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+
+.sub.center { text-align: center; }
+.pill.won { color: var(--good); border-color: #235a4a; }
+.pill.lost { color: var(--bad); border-color: #4a2a35; }

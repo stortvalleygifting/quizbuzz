@@ -84,6 +84,20 @@ export interface EventState {
   participants: { id: number; username: string; score: number }[];
 }
 
+export interface HeadToHead {
+  opponent: { id: number; username: string };
+  quizzes: { played: number; won: number; lost: number; drawn: number };
+  buzzer: { contested: number; youFirst: number; themFirst: number };
+  meetings: {
+    eventId: number;
+    name: string;
+    yourScore: number;
+    theirScore: number;
+    result: 'won' | 'lost' | 'drawn';
+    endedAt: string | null;
+  }[];
+}
+
 const TOKEN_KEY = 'quizbuzz.token';
 
 export const getToken = () => localStorage.getItem(TOKEN_KEY);
@@ -155,5 +169,8 @@ export const api = {
   startEvent: (eventId: number) => post<{ state: EventState }>(`/events/${eventId}/start`),
   finishEvent: (eventId: number) => post<{ state: EventState }>(`/events/${eventId}/finish`),
   reopenEvent: (eventId: number) => post<{ state: EventState }>(`/events/${eventId}/reopen`),
+
+  headToHead: (groupId: number, userId: number) =>
+    request<{ headToHead: HeadToHead }>(`/groups/${groupId}/head-to-head/${userId}`),
   nextQuestion: (eventId: number) => post<{ state: EventState }>(`/events/${eventId}/next-question`),
 };
