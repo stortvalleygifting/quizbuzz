@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { authRouter } from './routes/auth.js';
 import { groupsRouter } from './routes/groups.js';
+import { eventsRouter } from './routes/events.js';
 import { HttpError } from './lib/errors.js';
 
 export function createApp() {
@@ -15,6 +16,8 @@ export function createApp() {
   app.get('/api/health', (_req, res) => res.json({ ok: true }));
   app.use('/api/auth', authRouter);
   app.use('/api/groups', groupsRouter);
+  // Events hang off both /api/groups/:id/events and /api/events/:id.
+  app.use('/api', eventsRouter);
 
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found.', code: 'not_found' }));
 

@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api, type GroupDetail as Detail } from '../lib/api';
+import { api, type EventSummary, type GroupDetail as Detail } from '../lib/api';
 import { useAuth } from '../lib/auth';
 
 export default function GroupDetail() {
@@ -9,11 +9,18 @@ export default function GroupDetail() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [detail, setDetail] = useState<Detail | null>(null);
+  const [events, setEvents] = useState<EventSummary[]>([]);
+  const [addingEvent, setAddingEvent] = useState(false);
+  const [eventName, setEventName] = useState('');
+  const [eventWhen, setEventWhen] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(async () => {
-    setDetail(await api.group(id));
+    const d = await api.group(id);
+    setDetail(d);
+    // Only members can see the fixture list.
+    if (d.group.myStatus === 'approved') setEvents((await api.groupEvents(id)).events);
   }, [id]);
 
   useEffect(() => {
@@ -46,6 +53,16 @@ export default function GroupDetail() {
         {error ? <div className="error">{error}</div> : <div className="empty">Loading…</div>}
       </div>
     );
+  }
+
+  async function createEvent(e: FormEvent) {
+    e.preventDefault();
+    await act(async () => {
+      await api.createEvent(id, eventName, eventWhen.trim() || undefined);
+      setEventName('');
+      setEventWhen('');
+      setAddingEvent(false);
+    });
   }
 
   const { group, members, requests } = detail;
@@ -112,6 +129,65 @@ export default function GroupDetail() {
 
       {isMember && (
         <>
+          <h2>Quiz nights</h2>
+          {events.length === 0 && !addingEvent && (
+            <div className="card empty">Nothing planned yet.</div>
+          )}
+          {events.length > 0 && (
+            <div className="card list">
+              {events.map((ev) => (
+                <Link key={ev.id} className="group-link" to={`/events/${ev.id}`}>
+                  <div className="row">
+                    <div className="grow">
+                      <div className="name">{ev.name}</div>
+                      <div className="sub">
+                        {ev.scheduledFor ? `${ev.scheduledFor} · ` : ''}
+                        {ev.participantCount} playing
+                        {ev.questionMasterName ? ` · QM ${ev.questionMasterName}` : ''}
+                      </div>
+                    </div>
+                    {ev.status === 'live' && <span className="pill live">Live</span>}
+                    {ev.status === 'finished' && <span className="pill">Done</span>}
+                    {ev.status === 'scheduled' && ev.joined && <span className="pill pending">Joined</span>}
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+
+          {isAdmin &&
+            (addingEvent ? (
+              <form className="card" onSubmit={createEvent}>
+                <label htmlFor="event-name">What is it called?</label>
+                <input
+                  id="event-name"
+                  value={eventName}
+                  onChange={(e) => setEventName(e.target.value)}
+                  placeholder="Thursday night quiz"
+                  required
+                />
+                <label htmlFor="event-when">When? (optional)</label>
+                <input
+                  id="event-when"
+                  value={eventWhen}
+                  onChange={(e) => setEventWhen(e.target.value)}
+                  placeholder="Thursday 8pm"
+                />
+                <div className="row">
+                  <button className="primary grow" type="submit" disabled={busy}>
+                    Create
+                  </button>
+                  <button type="button" onClick={() => setAddingEvent(false)}>
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <button className="primary block" onClick={() => setAddingEvent(true)}>
+                Plan a quiz night
+              </button>
+            ))}
+
           <h2>Members</h2>
           <div className="card list">
             {members.map((m) => {
