@@ -21,10 +21,16 @@ function windowAround(board: BoardEntry[], userId: number): BoardEntry[] {
   return board.slice(start, start + 5);
 }
 
-function Scoreboard({ state }: { state: EventState }) {
-  const rows = state.me.isQuestionMaster
-    ? state.leaderboard.slice(0, 5)
-    : windowAround(state.leaderboard, state.me.userId);
+/**
+ * `full` is the board at the end of the night: everybody who played, rather
+ * than the five-row window the live screen keeps around you.
+ */
+function Scoreboard({ state, full = false }: { state: EventState; full?: boolean }) {
+  const rows = full
+    ? state.leaderboard
+    : state.me.isQuestionMaster
+      ? state.leaderboard.slice(0, 5)
+      : windowAround(state.leaderboard, state.me.userId);
 
   if (rows.length === 0) return <div className="empty">Nobody is playing yet.</div>;
 
@@ -143,7 +149,7 @@ export default function Event() {
           <>
             <h2>Final scores</h2>
             <div className="card">
-              <Scoreboard state={state} />
+              <Scoreboard state={state} full />
             </div>
             {(me.isQuestionMaster || me.isAdmin) && (
               <button className="primary block" onClick={() => run(() => api.reopenEvent(id))}>

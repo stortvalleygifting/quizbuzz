@@ -197,20 +197,36 @@ a { color: var(--accent-bright); }
 .error.thin { margin-bottom: 0; padding: 8px 12px; font-size: 13px; }
 
 /* ------------------------------------------------------------- scoreboard -- */
-/* Five rows share the space evenly and never scroll: place, name, score. */
+/*
+ * A row is as tall as what is in it, so the same board reads correctly in a
+ * card on an ordinary scrolling page — the final scores at the end of a quiz.
+ *
+ * Sharing the space evenly instead is the live screen's business, and lives
+ * under .board-half below, because a row with no height of its own needs a
+ * parent with a height to take its share of. Asking for it everywhere is what
+ * collapsed every final-scores row to nothing and printed the names on top of
+ * each other.
+ */
 
-.board { flex: 1 1 auto; display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+.board { display: flex; flex-direction: column; gap: 6px; min-height: 0; }
 .board-row {
-  flex: 1 1 0;
-  min-height: 0;
-  max-height: 62px;
+  min-height: 48px;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 12px;
+  padding: 9px 12px;
   border-radius: 12px;
   background: var(--surface);
   border: 1px solid var(--line);
+}
+
+/* The live screen: five rows share the top half evenly and never scroll. */
+.board-half .board { flex: 1 1 auto; }
+.board-half .board-row {
+  flex: 1 1 0;
+  min-height: 0;
+  max-height: 62px;
+  padding: 0 12px;
 }
 .board-row.me { background: #2a2352; border-color: var(--accent); }
 .board-row.answering { border-color: var(--accent-bright); box-shadow: 0 0 0 1px var(--accent-bright) inset; }
@@ -362,7 +378,7 @@ a { color: var(--accent-bright); }
   .board-half { flex: 1 1 50%; }
   .buzz-half { flex: 1 1 50%; }
   .buzz .buzz-word { font-size: clamp(32px, 7vw, 60px); }
-  .board-row { max-height: none; }
+  .board-half .board-row { max-height: none; }
 }
 
 /* ---------------------------------------------------------- head to head -- */

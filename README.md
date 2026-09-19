@@ -18,8 +18,9 @@ admin.
 
 **Quiz nights** — group admins plan an event, members join it, and one of them
 is made question master, and the admin starts it when everyone is in the room.
-A finished quiz can be re-opened by the question master or an admin, with the
-scores and the questions already asked intact.
+A finished quiz shows the final scores — everyone who played, not the live
+screen's five-row window — and can be re-opened by the question master or an
+admin, with the scores and the questions already asked intact.
 
 **The live screen** — the scoreboard fills the top half and the BUZZ! button the
 bottom half, where a thumb already is when the phone is held in one hand. The
