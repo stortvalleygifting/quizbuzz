@@ -89,6 +89,11 @@ export default function Groups() {
 
       {user?.signedUpAt && <div className="since">Member since {formatSignupDate(user.signedUpAt)}</div>}
 
+      <div className="account-links">
+        <Link to="/account">Change password</Link>
+        {user?.isSiteAdmin && <Link to="/admin">System admin</Link>}
+      </div>
+
       {error && <div className="error">{error}</div>}
 
       {mine.length === 0 ? (

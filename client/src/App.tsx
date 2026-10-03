@@ -5,6 +5,8 @@ import Groups from './pages/Groups';
 import GroupDetail from './pages/GroupDetail';
 import Event from './pages/Event';
 import HeadToHead from './pages/HeadToHead';
+import Admin from './pages/Admin';
+import Account from './pages/Account';
 
 export default function App() {
   const { user, loading } = useAuth();
@@ -18,6 +20,8 @@ export default function App() {
       <Route path="/groups/:groupId" element={<GroupDetail />} />
       <Route path="/events/:eventId" element={<Event />} />
       <Route path="/groups/:groupId/vs/:userId" element={<HeadToHead />} />
+      <Route path="/account" element={<Account />} />
+      {user.isSiteAdmin && <Route path="/admin" element={<Admin />} />}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

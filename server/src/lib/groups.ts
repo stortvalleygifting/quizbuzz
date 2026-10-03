@@ -1,5 +1,6 @@
 import type { DB } from './db.js';
 import { forbidden, notFound } from './errors.js';
+import { isSiteAdmin } from './siteAdmin.js';
 
 export interface MembershipRow {
   group_id: number;
@@ -30,9 +31,33 @@ export function getMembership(db: DB, groupId: number, userId: number): Membersh
     .get(groupId, userId) as unknown as MembershipRow | undefined;
 }
 
+/**
+ * Your membership as far as permissions go: a system admin counts as an
+ * approved admin of every group, whether or not they have joined it. Use
+ * getMembership for what is actually recorded, such as whether you have applied.
+ */
+export function effectiveMembership(db: DB, groupId: number, userId: number): MembershipRow | undefined {
+  const m = getMembership(db, groupId, userId);
+  if (!isSiteAdmin(usernameOf(db, userId))) return m;
+  return {
+    group_id: groupId,
+    user_id: userId,
+    requested_at: m?.requested_at ?? '',
+    joined_at: m?.joined_at ?? null,
+    ...m,
+    role: 'admin',
+    status: 'approved',
+  };
+}
+
+function usernameOf(db: DB, userId: number): string | undefined {
+  const row = db.prepare('SELECT username FROM users WHERE id = ?').get(userId) as { username: string } | undefined;
+  return row?.username;
+}
+
 /** The caller must be an approved member of the group. */
 export function requireMember(db: DB, groupId: number, userId: number): MembershipRow {
-  const m = getMembership(db, groupId, userId);
+  const m = effectiveMembership(db, groupId, userId);
   if (!m || m.status !== 'approved') throw forbidden('You need to be a member of this group.');
   return m;
 }

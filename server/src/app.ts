@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { authRouter } from './routes/auth.js';
 import { groupsRouter } from './routes/groups.js';
 import { eventsRouter } from './routes/events.js';
+import { adminRouter } from './routes/admin.js';
 import { HttpError } from './lib/errors.js';
 
 export function createApp() {
@@ -16,6 +17,7 @@ export function createApp() {
   app.get('/api/health', (_req, res) => res.json({ ok: true }));
   app.use('/api/auth', authRouter);
   app.use('/api/groups', groupsRouter);
+  app.use('/api/admin', adminRouter);
   // Events hang off both /api/groups/:id/events and /api/events/:id.
   app.use('/api', eventsRouter);
 
