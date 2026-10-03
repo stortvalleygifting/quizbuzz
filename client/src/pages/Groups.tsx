@@ -2,10 +2,12 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { api, type GroupSummary } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { useConfirm } from '../lib/confirm';
 import { formatSignupDate } from '../lib/dates';
 
 export default function Groups() {
   const { user, signOut } = useAuth();
+  const confirm = useConfirm();
   const [mine, setMine] = useState<GroupSummary[]>([]);
   const [pending, setPending] = useState<GroupSummary[]>([]);
   const [results, setResults] = useState<GroupSummary[] | null>(null);
@@ -136,7 +138,14 @@ export default function Groups() {
                   <div className="name">{g.name}</div>
                   <div className="sub">An admin needs to let you in.</div>
                 </div>
-                <button className="small" disabled={busy} onClick={() => act(() => api.withdraw(g.id))}>
+                <button
+                  className="small"
+                  disabled={busy}
+                  onClick={async () => {
+                    if (await confirm({ title: `Withdraw from ${g.name}?`, message: 'You can ask to join again later.', confirmLabel: 'Withdraw', danger: true }))
+                      act(() => api.withdraw(g.id));
+                  }}
+                >
                   Withdraw
                 </button>
               </div>

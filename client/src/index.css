@@ -220,14 +220,25 @@ a { color: var(--accent-bright); }
   border: 1px solid var(--line);
 }
 
-/* The live screen: five rows share the top half evenly and never scroll. */
-.board-half .board { flex: 1 1 auto; }
+/* The live screen: five rows fill the top half and the rest scroll. Each row
+   is a fifth of the board's own height (a size container, so 100cqh is the
+   board and not the page), never under 44px so names stay tappable. */
+.board-half .board {
+  position: relative; /* so a row's offsetTop is measured from the board */
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  container-type: size;
+}
 .board-half .board-row {
-  flex: 1 1 0;
-  min-height: 0;
-  max-height: 62px;
+  flex: 0 0 auto;
+  height: clamp(44px, calc((100cqh - 24px) / 5), 62px);
   padding: 0 12px;
 }
+/* With more than five playing, show five and a half rows, so the half-row cut
+   off at the edge says there is more to scroll to. */
+.board-half .board.scrolls .board-row { height: clamp(44px, calc((100cqh - 30px) / 5.5), 62px); }
 .board-row.me { background: #2a2352; border-color: var(--accent); }
 .board-row.answering { border-color: var(--accent-bright); box-shadow: 0 0 0 1px var(--accent-bright) inset; }
 .board-row .place {
@@ -393,3 +404,26 @@ a { color: var(--accent-bright); }
 .sub.center { text-align: center; }
 .pill.won { color: var(--good); border-color: #235a4a; }
 .pill.lost { color: var(--bad); border-color: #4a2a35; }
+
+/* ------------------------------------------------------------ pop-ups -- */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(5, 7, 16, 0.72);
+}
+.modal {
+  width: 100%;
+  max-width: 400px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 18px;
+}
+.modal h2 { margin: 0 0 6px; font-size: 18px; text-transform: none; letter-spacing: 0; color: var(--text, inherit); }
+.modal .sub { margin: 0 0 16px; }
+.modal-actions { display: flex; gap: 10px; }
