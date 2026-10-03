@@ -6,6 +6,8 @@ import { HttpError } from './errors.js';
 import { buildState, canWatch, getEvent, judgeAnswer, recordBuzz, type Judgement } from './events.js';
 
 export const eventRoom = (eventId: number) => `event:${eventId}`;
+/** Every open screen one person has, wherever they are in the app. */
+export const userRoom = (userId: number) => `user:${userId}`;
 
 let io: SocketServer | null = null;
 
@@ -47,6 +49,8 @@ export function attachRealtime(server: SocketServer): void {
     // "server shutting down" a restart.
     const who = socket.data.user?.username ?? '?';
     socket.on('disconnect', (reason) => console.log(`socket dropped: ${who} (${reason})`));
+    const uid = socket.data.user?.uid as number | undefined;
+    if (uid) socket.join(userRoom(uid));
     socket.emit('ready', { user: socket.data.user });
     registerHandlers(socket);
   });
@@ -77,6 +81,16 @@ export async function broadcastEvent(eventId: number): Promise<void> {
       socket.leave(eventRoom(eventId));
     }
   }
+}
+
+/**
+ * Tells these people their groups have changed (an application approved or
+ * turned down, someone asking to join a group they run), so the screen they
+ * have open reloads instead of going stale until they refresh it.
+ */
+export function notifyGroupsChanged(userIds: number[], groupId: number): void {
+  if (!io || userIds.length === 0) return;
+  io.to(userIds.map(userRoom)).emit('groups:changed', { groupId });
 }
 
 /** Turns a thrown HttpError into something the client can show. */

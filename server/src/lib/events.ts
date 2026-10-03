@@ -450,3 +450,83 @@ export function getHeadToHead(db: DB, groupId: number, meId: number, themId: num
     meetings,
   };
 }
+
+// ------------------------------------------------ one quiz, two players --
+
+export interface QuizHeadToHead {
+  opponent: { id: number; username: string };
+  yourScore: number;
+  theirScore: number;
+  /** Questions in this quiz where you both buzzed, and who got there first. */
+  buzzer: { contested: number; youFirst: number; themFirst: number };
+}
+
+/**
+ * The group page's head-to-head, cut down to a single quiz: the two scores,
+ * and who reached the buzzer first on the questions you both went for.
+ */
+export function getQuizHeadToHead(db: DB, eventId: number, meId: number, themId: number): QuizHeadToHead {
+  const players = db
+    .prepare(
+      `SELECT u.id, u.username, p.score
+         FROM event_participants p JOIN users u ON u.id = p.user_id
+        WHERE p.event_id = ? AND p.user_id IN (?, ?)`,
+    )
+    .all(eventId, meId, themId) as unknown as { id: number; username: string; score: number }[];
+  const me = players.find((p) => p.id === meId);
+  const them = players.find((p) => p.id === themId);
+  if (!me) throw badRequest('You are not playing in this quiz.', 'not_participant');
+  if (!them) throw notFound('That person is not playing in this quiz.');
+
+  const race = db
+    .prepare(
+      `SELECT
+         SUM(CASE WHEN mine.seq < theirs.seq THEN 1 ELSE 0 END) AS you_first,
+         SUM(CASE WHEN mine.seq > theirs.seq THEN 1 ELSE 0 END) AS them_first,
+         COUNT(*) AS contested
+       FROM questions q
+       JOIN buzzes mine   ON mine.question_id   = q.id AND mine.user_id   = @me
+       JOIN buzzes theirs ON theirs.question_id = q.id AND theirs.user_id = @them
+      WHERE q.event_id = @event`,
+    )
+    .get({ event: eventId, me: meId, them: themId }) as unknown as {
+    you_first: number | null;
+    them_first: number | null;
+    contested: number;
+  };
+
+  return {
+    opponent: { id: them.id, username: them.username },
+    yourScore: me.score,
+    theirScore: them.score,
+    buzzer: {
+      contested: race.contested ?? 0,
+      youFirst: race.you_first ?? 0,
+      themFirst: race.them_first ?? 0,
+    },
+  };
+}
+
+/**
+ * Question master: put a score right by hand, say after a mis-tap or a
+ * challenge upheld. Goes into score_events like any other change, with no
+ * question attached, so the history still adds up to the score shown.
+ */
+export function adjustScore(db: DB, eventId: number, masterId: number, userId: number, delta: number): void {
+  transaction(db, () => {
+    const event = getEvent(db, eventId);
+    requireQuestionMaster(event, masterId);
+    if (event.status === 'scheduled') throw badRequest('This quiz has not started yet.', 'not_live');
+    if (!isParticipant(db, eventId, userId) || userId === event.question_master_id) {
+      throw notFound('That person is not playing in this quiz.');
+    }
+    db.prepare(
+      `INSERT INTO score_events (event_id, user_id, question_id, delta, awarded_by) VALUES (?, ?, NULL, ?, ?)`,
+    ).run(eventId, userId, delta, masterId);
+    db.prepare('UPDATE event_participants SET score = score + ? WHERE event_id = ? AND user_id = ?').run(
+      delta,
+      eventId,
+      userId,
+    );
+  });
+}

@@ -13,10 +13,20 @@ import {
   serializeGroup,
   type GroupRow,
 } from '../lib/groups.js';
+import { notifyGroupsChanged } from '../lib/realtime.js';
 import { z } from 'zod';
 import type { SQLInputValue } from 'node:sqlite';
 
 export const groupsRouter = Router();
+
+/** The admins of a group, who see its join requests. */
+function adminIds(db: ReturnType<typeof getDb>, groupId: number): number[] {
+  return (
+    db
+      .prepare(`SELECT user_id FROM group_members WHERE group_id = ? AND status = 'approved' AND role = 'admin'`)
+      .all(groupId) as unknown as { user_id: number }[]
+  ).map((r) => r.user_id);
+}
 groupsRouter.use(requireAuth);
 
 interface GroupSummaryRow extends GroupRow {
@@ -179,6 +189,7 @@ groupsRouter.post(
       groupId,
       me,
     );
+    notifyGroupsChanged(adminIds(db, groupId), groupId);
     res.status(201).json({ status: 'pending' });
   }),
 );
@@ -193,6 +204,7 @@ groupsRouter.delete(
     const existing = getMembership(db, groupId, me);
     if (!existing || existing.status !== 'pending') throw notFound('You have no application to withdraw.');
     db.prepare('DELETE FROM group_members WHERE group_id = ? AND user_id = ?').run(groupId, me);
+    notifyGroupsChanged(adminIds(db, groupId), groupId);
     res.json({ status: null });
   }),
 );
@@ -215,6 +227,7 @@ groupsRouter.post(
       `UPDATE group_members SET status = 'approved', joined_at = datetime('now')
         WHERE group_id = ? AND user_id = ?`,
     ).run(groupId, userId);
+    notifyGroupsChanged([userId], groupId);
     res.json({ status: 'approved' });
   }),
 );
@@ -239,6 +252,7 @@ groupsRouter.post(
     }
 
     db.prepare('UPDATE group_members SET role = ? WHERE group_id = ? AND user_id = ?').run(role, groupId, userId);
+    notifyGroupsChanged([userId], groupId);
     res.json({ role });
   }),
 );
@@ -273,6 +287,12 @@ groupsRouter.delete(
     }
 
     db.prepare('DELETE FROM group_members WHERE group_id = ? AND user_id = ?').run(groupId, userId);
+    // The person removed (or turned down) sees it; if they left, or they had
+    // only applied, the admins' lists change too.
+    notifyGroupsChanged(
+      leavingMyself || target.status === 'pending' ? [userId, ...adminIds(db, groupId)] : [userId],
+      groupId,
+    );
     res.json({ removed: true });
   }),
 );
