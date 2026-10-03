@@ -1,9 +1,10 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState, type ReactNode, type Ref } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api, type EventState } from '../lib/api';
+import { api, type BoardEntry, type EventState } from '../lib/api';
 import { useConfirm } from '../lib/confirm';
 import { useEventState } from '../lib/useEventState';
 import { JUDGED, YOUR_TURN, vibrate } from '../lib/haptics';
+import { AdjustScore, QuizRivalry, useHold } from './ScorePopups';
 
 const ordinal = (n: number): string => {
   const suffix = n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th';
@@ -21,7 +22,17 @@ const HANDS_OFF_MS = 6000;
  * first asked for, and follows you as your place changes, unless you have just
  * scrolled it yourself to look at somebody else.
  */
-function Scoreboard({ state, full = false }: { state: EventState; full?: boolean }) {
+function Scoreboard({
+  state,
+  full = false,
+  onTap,
+  onHold,
+}: {
+  state: EventState;
+  full?: boolean;
+  onTap?: (e: BoardEntry) => void;
+  onHold?: (e: BoardEntry) => void;
+}) {
   const rows = state.leaderboard;
   const boardRef = useRef<HTMLDivElement>(null);
   const meRef = useRef<HTMLDivElement>(null);
@@ -50,10 +61,13 @@ function Scoreboard({ state, full = false }: { state: EventState; full?: boolean
         const isMe = e.userId === state.me.userId;
         const answering = state.answering?.userId === e.userId;
         return (
-          <div
-            className={`board-row${isMe ? ' me' : ''}${answering ? ' answering' : ''}`}
+          <BoardRow
             key={e.userId}
-            ref={isMe ? meRef : undefined}
+            entry={e}
+            rowRef={isMe ? meRef : undefined}
+            className={`board-row${isMe ? ' me' : ''}${answering ? ' answering' : ''}`}
+            onTap={onTap && !isMe ? () => onTap(e) : undefined}
+            onHold={onHold ? () => onHold(e) : undefined}
           >
             <span className="place">{e.place}</span>
             <span className="who">{e.username}</span>
@@ -65,9 +79,46 @@ function Scoreboard({ state, full = false }: { state: EventState; full?: boolean
               queued.has(e.userId) && <span className="flag queued">buzzed</span>
             )}
             <span className="score">{e.score}</span>
-          </div>
+          </BoardRow>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * One leaderboard row. Players tap someone else's name to see how they are
+ * doing against them in this quiz; the question master presses and holds a
+ * name to put that person's score right.
+ */
+function BoardRow({
+  entry,
+  rowRef,
+  className,
+  onTap,
+  onHold,
+  children,
+}: {
+  entry: BoardEntry;
+  rowRef?: Ref<HTMLDivElement>;
+  className: string;
+  onTap?: () => void;
+  onHold?: () => void;
+  children: ReactNode;
+}) {
+  const hold = useHold(() => {
+    vibrate(JUDGED);
+    onHold?.();
+  });
+  return (
+    <div
+      className={`${className}${onTap || onHold ? ' pickable' : ''}`}
+      ref={rowRef}
+      data-user={entry.userId}
+      onClick={onTap}
+      {...(onHold ? hold : {})}
+    >
+      {children}
     </div>
   );
 }
@@ -95,6 +146,9 @@ export default function Event() {
   const navigate = useNavigate();
   const { state, error, connected, buzzPending, buzz, judge, run } = useEventState(id);
   const confirm = useConfirm();
+  // A name tapped (a player looking at a rival) or held (the question master
+  // fixing a score) on the leaderboard.
+  const [picked, setPicked] = useState<{ entry: BoardEntry; kind: 'rivalry' | 'adjust' } | null>(null);
 
   // The moment the floor passes to you, in a room too loud to hear anything.
   const wasMine = useRef(false);
@@ -119,6 +173,27 @@ export default function Event() {
   }
 
   const { event, me, answering, queue } = state;
+  const boardActions = {
+    // Head-to-head only once the quiz is over, so nobody is distracted mid-game.
+    onTap:
+      event.status === 'finished' && me.isParticipant && !me.isQuestionMaster
+        ? (entry: BoardEntry) => setPicked({ entry, kind: 'rivalry' })
+        : undefined,
+    onHold: me.isQuestionMaster ? (entry: BoardEntry) => setPicked({ entry, kind: 'adjust' }) : undefined,
+  };
+  const popup = () =>
+    picked?.kind === 'rivalry' ? (
+      <QuizRivalry eventId={id} entry={picked.entry} onClose={() => setPicked(null)} />
+    ) : picked?.kind === 'adjust' ? (
+      <AdjustScore
+        entry={picked.entry}
+        onClose={() => setPicked(null)}
+        onSave={(delta) => {
+          setPicked(null);
+          run(() => api.adjustScore(id, picked.entry.userId, delta));
+        }}
+      />
+    ) : null;
   const waiting = queue.filter((b) => b.outcome === 'waiting');
   // Your place among the people still to be heard, so 1st means you are next
   // up — the same order the "Next up" line lists. 0 if you are not waiting:
@@ -159,13 +234,14 @@ export default function Event() {
           <>
             <h2>Final scores</h2>
             <div className="card">
-              <Scoreboard state={state} full />
+              <Scoreboard state={state} full {...boardActions} />
             </div>
             {(me.isQuestionMaster || me.isAdmin) && (
               <button className="primary block" onClick={() => run(() => api.reopenEvent(id))}>
                 Re-open this quiz
               </button>
             )}
+            {popup()}
           </>
         )}
 
@@ -259,7 +335,7 @@ export default function Event() {
         {!connected && <div className="netbar">Reconnecting… your buzz may not count yet.</div>}
         {error && <div className="error thin">{error}</div>}
 
-        <Scoreboard state={state} />
+        <Scoreboard state={state} {...boardActions} />
 
         {me.isQuestionMaster ? (
           <div className="qm-tools">
@@ -339,6 +415,7 @@ export default function Event() {
           </button>
         )}
       </div>
+      {picked?.kind === 'adjust' && popup()}
     </div>
   );
 }

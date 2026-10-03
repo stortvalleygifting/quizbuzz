@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import type { Express } from 'express';
-import { openDatabase, setDb } from '../lib/db.js';
+import { getDb, openDatabase, setDb } from '../lib/db.js';
 import { createApp } from '../app.js';
 
 let app: Express;
@@ -546,5 +546,80 @@ describe('head to head', () => {
     const myself = await request(app).get(`/api/groups/${groupId}/head-to-head/${ann.id}`).set(auth(ann.token));
     expect(myself.status).toBe(400);
     expect(myself.body.code).toBe('self');
+  });
+});
+
+describe('one quiz head to head', () => {
+  it('compares two players in a single quiz', async () => {
+    const { eventId, owner, players } = await liveEvent(['ann', 'bob']);
+    const [ann, bob] = players;
+
+    // Ann first and right; Bob first and wrong then Ann right; Bob alone and right.
+    await buzz(eventId, ann.token);
+    await buzz(eventId, bob.token);
+    await judge(eventId, owner.token, 1);
+    await buzz(eventId, bob.token);
+    await buzz(eventId, ann.token);
+    await judge(eventId, owner.token, -1);
+    await judge(eventId, owner.token, 1);
+    await buzz(eventId, bob.token);
+    await judge(eventId, owner.token, 1);
+
+    // Not while the quiz is still going.
+    const early = await request(app).get(`/api/events/${eventId}/head-to-head/${bob.id}`).set(auth(ann.token));
+    expect(early.body.code).toBe('not_finished');
+    await request(app).post(`/api/events/${eventId}/finish`).set(auth(owner.token));
+
+    const r = await request(app).get(`/api/events/${eventId}/head-to-head/${bob.id}`).set(auth(ann.token));
+    expect(r.status).toBe(200);
+    expect(r.body.headToHead).toEqual({
+      opponent: { id: bob.id, username: 'bob' },
+      yourScore: 2,
+      theirScore: 0,
+      buzzer: { contested: 2, youFirst: 1, themFirst: 1 },
+    });
+
+    const self = await request(app).get(`/api/events/${eventId}/head-to-head/${ann.id}`).set(auth(ann.token));
+    expect(self.body.code).toBe('self');
+    const outsider = await register('outsider');
+    const byOutsider = await request(app)
+      .get(`/api/events/${eventId}/head-to-head/${bob.id}`)
+      .set(auth(outsider.token));
+    expect(byOutsider.status).toBe(403);
+  });
+});
+
+describe('adjusting a score by hand', () => {
+  const adjust = (eventId: number, token: string, userId: number, delta: number) =>
+    request(app).post(`/api/events/${eventId}/adjust`).set(auth(token)).send({ userId, delta });
+
+  it('lets the question master change a score, and records why', async () => {
+    const { eventId, owner, players } = await liveEvent(['ann', 'bob']);
+    const [ann, bob] = players;
+
+    const r = await adjust(eventId, owner.token, ann.id, 3);
+    expect(r.status).toBe(200);
+    expect(r.body.state.leaderboard.find((e: { userId: number }) => e.userId === ann.id).score).toBe(3);
+    expect((await adjust(eventId, owner.token, ann.id, -1)).status).toBe(200);
+    expect((await state(eventId, ann.token)).leaderboard[0]).toMatchObject({ userId: ann.id, score: 2 });
+
+    const history = getDb()
+      .prepare('SELECT delta, question_id FROM score_events WHERE event_id = ? AND user_id = ? ORDER BY id')
+      .all(eventId, ann.id);
+    expect(history).toEqual([
+      { delta: 3, question_id: null },
+      { delta: -1, question_id: null },
+    ]);
+
+    // Nobody else may, and the master can't score themselves or do nothing.
+    expect((await adjust(eventId, bob.token, bob.id, 5)).status).toBe(403);
+    expect((await adjust(eventId, owner.token, owner.id, 5)).status).toBe(404);
+    expect((await adjust(eventId, owner.token, ann.id, 0)).status).toBe(400);
+  });
+
+  it('can still put a score right after the quiz has finished', async () => {
+    const { eventId, owner, players } = await liveEvent(['ann']);
+    await request(app).post(`/api/events/${eventId}/finish`).set(auth(owner.token));
+    expect((await adjust(eventId, owner.token, players[0].id, 1)).status).toBe(200);
   });
 });

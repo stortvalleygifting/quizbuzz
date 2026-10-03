@@ -86,6 +86,14 @@ export interface EventState {
   participants: { id: number; username: string; score: number }[];
 }
 
+/** You against one other player, in a single quiz. */
+export interface QuizHeadToHead {
+  opponent: { id: number; username: string };
+  yourScore: number;
+  theirScore: number;
+  buzzer: { contested: number; youFirst: number; themFirst: number };
+}
+
 export interface HeadToHead {
   opponent: { id: number; username: string };
   quizzes: { played: number; won: number; lost: number; drawn: number };
@@ -175,4 +183,8 @@ export const api = {
   headToHead: (groupId: number, userId: number) =>
     request<{ headToHead: HeadToHead }>(`/groups/${groupId}/head-to-head/${userId}`),
   nextQuestion: (eventId: number) => post<{ state: EventState }>(`/events/${eventId}/next-question`),
+  quizHeadToHead: (eventId: number, userId: number) =>
+    request<{ headToHead: QuizHeadToHead }>(`/events/${eventId}/head-to-head/${userId}`),
+  adjustScore: (eventId: number, userId: number, delta: number) =>
+    post<{ state: EventState }>(`/events/${eventId}/adjust`, { userId, delta }),
 };

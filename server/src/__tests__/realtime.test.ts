@@ -173,3 +173,32 @@ describe('the live channel', () => {
     await socket.timeout(2000).emitWithAck('client:alive');
   });
 });
+
+describe('group changes pushed to screens', () => {
+  /** A socket for someone who isn't watching any quiz, just has the app open. */
+  function appOpen(token: string): Promise<ClientSocket> {
+    const socket = connect(url, { auth: { token }, transports: ['websocket'] });
+    clients.push(socket);
+    return new Promise((resolve, reject) => {
+      socket.once('connect_error', reject);
+      socket.once('ready', () => resolve(socket));
+    });
+  }
+
+  it('tells an applicant the moment they are let in, and admins when someone applies', async () => {
+    const owner = await register('owner');
+    const groupId = (await request(app).post('/api/groups').set(auth(owner.token)).send({ name: 'Tuesday Quiz' }))
+      .body.group.id as number;
+    const ann = await register('ann');
+    const annScreen = await appOpen(ann.token);
+    const ownerScreen = await appOpen(owner.token);
+
+    const ownerHears = new Promise((resolve) => ownerScreen.once('groups:changed', resolve));
+    await request(app).post(`/api/groups/${groupId}/apply`).set(auth(ann.token));
+    expect(await ownerHears).toEqual({ groupId });
+
+    const annHears = new Promise((resolve) => annScreen.once('groups:changed', resolve));
+    await request(app).post(`/api/groups/${groupId}/members/${ann.id}/approve`).set(auth(owner.token));
+    expect(await annHears).toEqual({ groupId });
+  });
+});

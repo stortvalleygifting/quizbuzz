@@ -4,6 +4,7 @@ import { api, type GroupSummary } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useConfirm } from '../lib/confirm';
 import { formatSignupDate } from '../lib/dates';
+import { useGroupsChanged } from '../lib/useGroupsChanged';
 
 export default function Groups() {
   const { user, signOut } = useAuth();
@@ -12,6 +13,7 @@ export default function Groups() {
   const [pending, setPending] = useState<GroupSummary[]>([]);
   const [results, setResults] = useState<GroupSummary[] | null>(null);
   const [query, setQuery] = useState('');
+  const [searchTick, setSearchTick] = useState(0);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDescription, setNewDescription] = useState('');
@@ -28,6 +30,13 @@ export default function Groups() {
     refresh().catch((e) => setError(e.message));
   }, [refresh]);
 
+  // "Applied" turns into "Open" the moment an admin lets you in.
+  // Search results carry the same "Applied" pill, so run the search again too.
+  useGroupsChanged(() => {
+    refresh().catch(() => {});
+    setSearchTick((t) => t + 1);
+  });
+
   // Search as they type, once they have typed something worth searching for.
   useEffect(() => {
     const q = query.trim();
@@ -42,7 +51,7 @@ export default function Groups() {
         .catch((e) => setError(e.message));
     }, 250);
     return () => clearTimeout(t);
-  }, [query]);
+  }, [query, searchTick]);
 
   async function act(fn: () => Promise<unknown>) {
     setError('');

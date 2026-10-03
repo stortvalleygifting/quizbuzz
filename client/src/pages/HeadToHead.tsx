@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { api, type HeadToHead as Record } from '../lib/api';
 
 /** Big number with a caption, three across. */
-function Tally({ value, label, tone }: { value: number; label: string; tone?: 'good' | 'bad' }) {
+export function Tally({ value, label, tone }: { value: number; label: string; tone?: 'good' | 'bad' }) {
   return (
     <div className={`tally${tone ? ` ${tone}` : ''}`}>
       <div className="tally-value">{value}</div>

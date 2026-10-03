@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, type EventSummary, type GroupDetail as Detail } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useConfirm } from '../lib/confirm';
+import { useGroupsChanged } from '../lib/useGroupsChanged';
 
 export default function GroupDetail() {
   const { groupId } = useParams();
@@ -28,6 +29,9 @@ export default function GroupDetail() {
   useEffect(() => {
     refresh().catch((e) => setError(e.message));
   }, [refresh]);
+
+  // Approved while looking at the group, or a new request for its admins.
+  useGroupsChanged(() => refresh().catch(() => {}), id);
 
   async function act(fn: () => Promise<unknown>, afterwards?: () => void) {
     setError('');

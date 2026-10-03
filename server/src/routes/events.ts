@@ -3,12 +3,15 @@ import { z } from 'zod';
 import { getDb, transaction } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
 import { asyncHandler } from '../lib/async.js';
-import { badRequest, conflict, notFound } from '../lib/errors.js';
+import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { parseBody, parseId } from '../lib/validation.js';
 import { getGroup, getMembership, requireAdmin, requireMember } from '../lib/groups.js';
 import {
+  adjustScore,
   assertCanBeQuestionMaster,
   buildState,
+  canWatch,
+  getQuizHeadToHead,
   getHeadToHead,
   getEvent,
   isParticipant,
@@ -298,6 +301,50 @@ eventsRouter.post(
     judgeAnswer(db, eventId, me, delta as Judgement);
     await broadcastEvent(eventId);
     res.json({ state: buildState(db, eventId, me) });
+  }),
+);
+
+/** Question master: change someone's score by hand (press and hold their name). */
+const adjustSchema = z.object({
+  userId: z.number().int().positive(),
+  delta: z
+    .number()
+    .int()
+    .min(-50)
+    .max(50)
+    .refine((d) => d !== 0, 'Pick a change other than 0.'),
+});
+eventsRouter.post(
+  '/events/:eventId/adjust',
+  asyncHandler(async (req, res) => {
+    const eventId = parseId(req.params.eventId, 'event');
+    const { userId, delta } = parseBody(adjustSchema, req.body);
+    const me = req.user!.uid;
+    const db = getDb();
+    adjustScore(db, eventId, me, userId, delta);
+    await broadcastEvent(eventId);
+    res.json({ state: buildState(db, eventId, me) });
+  }),
+);
+
+/** You against one other player, in this quiz only (tap their name on the final scores). */
+eventsRouter.get(
+  '/events/:eventId/head-to-head/:userId',
+  asyncHandler(async (req, res) => {
+    const eventId = parseId(req.params.eventId, 'event');
+    const themId = parseId(req.params.userId, 'player');
+    const me = req.user!.uid;
+    const db = getDb();
+    const event = getEvent(db, eventId);
+    if (!canWatch(db, event, me)) throw forbidden('You need to be in this group.');
+    if (themId === me) throw badRequest('That is you.', 'self');
+    if (event.status !== 'finished') {
+      throw badRequest('Head-to-head opens once the quiz has finished.', 'not_finished');
+    }
+    if (event.status !== 'finished') {
+      throw badRequest('Head-to-head opens once the quiz has finished.', 'not_finished');
+    }
+    res.json({ headToHead: getQuizHeadToHead(db, eventId, me, themId) });
   }),
 );
 
