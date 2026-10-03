@@ -166,4 +166,10 @@ describe('the live channel', () => {
     });
     expect(failure.code).toBe('forbidden');
   });
+
+  it('answers a woken phone checking its connection is still alive', async () => {
+    const { owner, eventId } = await liveEvent(['ann']);
+    const socket = await watcher(owner.token, eventId);
+    await socket.timeout(2000).emitWithAck('client:alive');
+  });
 });

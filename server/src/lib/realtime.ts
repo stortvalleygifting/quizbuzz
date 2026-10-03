@@ -14,7 +14,13 @@ let io: SocketServer | null = null;
  * buzz and scoring handlers.
  */
 export function createSocketServer(httpServer: HttpServer): SocketServer {
-  const server = new SocketServer(httpServer, { cors: { origin: true, credentials: true } });
+  const server = new SocketServer(httpServer, {
+    cors: { origin: true, credentials: true },
+    // Notice a dead phone within about 20 seconds rather than the default 45,
+    // so it is dropped and redials sooner. Each ping is a few bytes.
+    pingInterval: 10_000,
+    pingTimeout: 10_000,
+  });
 
   server.use((socket, next) => {
     const token = socket.handshake.auth?.token as string | undefined;
@@ -35,6 +41,12 @@ export function createSocketServer(httpServer: HttpServer): SocketServer {
 export function attachRealtime(server: SocketServer): void {
   io = server;
   server.on('connection', (socket) => {
+    // One line per dropped phone, so `fly logs` after a quiz night shows who
+    // lost their connection, when, and why: "ping timeout" is the phone or the
+    // wifi going quiet, "transport close" the connection being cut, and
+    // "server shutting down" a restart.
+    const who = socket.data.user?.username ?? '?';
+    socket.on('disconnect', (reason) => console.log(`socket dropped: ${who} (${reason})`));
     socket.emit('ready', { user: socket.data.user });
     registerHandlers(socket);
   });
@@ -89,6 +101,12 @@ function registerHandlers(socket: Socket): void {
     } catch (err) {
       fail(socket, err);
     }
+  });
+
+  // A phone that has just woken up asks this to find out whether its
+  // connection is still alive; an answer is all it needs.
+  socket.on('client:alive', (ack: unknown) => {
+    if (typeof ack === 'function') ack();
   });
 
   socket.on('event:leave', (raw: unknown) => {

@@ -5,6 +5,12 @@ import { TAP, vibrate } from './haptics';
 
 /** How long the button admits to having sent a buzz before it gives up waiting. */
 const PENDING_TIMEOUT_MS = 3000;
+/**
+ * How long the connection has to be down before the screen says so. Most drops
+ * on a phone are over in well under this, and a banner that flashes up for
+ * every one of them makes people think the app is broken.
+ */
+const OFFLINE_GRACE_MS = 2000;
 
 /**
  * Keeps one event's state live.
@@ -21,10 +27,11 @@ const PENDING_TIMEOUT_MS = 3000;
 export function useEventState(eventId: number) {
   const [state, setState] = useState<EventState | null>(null);
   const [error, setError] = useState('');
-  const [connected, setConnected] = useState(false);
+  const [connected, setConnected] = useState(true);
   const [buzzPending, setBuzzPending] = useState(false);
   const latest = useRef(0);
   const pendingTimer = useRef<ReturnType<typeof setTimeout>>();
+  const offlineTimer = useRef<ReturnType<typeof setTimeout>>();
 
   const settle = useCallback(() => {
     clearTimeout(pendingTimer.current);
@@ -49,12 +56,17 @@ export function useEventState(eventId: number) {
     const watch = () => socket.emit('event:watch', { eventId });
     const onConnect = () => {
       if (!live) return;
+      clearTimeout(offlineTimer.current);
       setConnected(true);
       watch();
     };
+    const goneQuiet = () => {
+      clearTimeout(offlineTimer.current);
+      offlineTimer.current = setTimeout(() => live && !socket.connected && setConnected(false), OFFLINE_GRACE_MS);
+    };
     const onDisconnect = () => {
       if (!live) return;
-      setConnected(false);
+      goneQuiet();
       settle();
     };
 
@@ -63,7 +75,10 @@ export function useEventState(eventId: number) {
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
     if (socket.connected) onConnect();
-    else socket.connect();
+    else {
+      goneQuiet();
+      socket.connect();
+    }
 
     const stamp = ++latest.current;
     api
@@ -77,6 +92,7 @@ export function useEventState(eventId: number) {
     return () => {
       live = false;
       clearTimeout(pendingTimer.current);
+      clearTimeout(offlineTimer.current);
       socket.emit('event:leave', { eventId });
       socket.off('event:state', onState);
       socket.off('event:error', onError);

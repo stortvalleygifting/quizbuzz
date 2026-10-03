@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api, type BoardEntry, type EventState } from '../lib/api';
+import { api, type EventState } from '../lib/api';
+import { useConfirm } from '../lib/confirm';
 import { useEventState } from '../lib/useEventState';
 import { JUDGED, YOUR_TURN, vibrate } from '../lib/haptics';
 
@@ -9,35 +10,42 @@ const ordinal = (n: number): string => {
   return `${n}${suffix}`;
 };
 
-/**
- * The five rows Rob asked for: you, and two people either side. Near the top or
- * the bottom of the board the window slides so it always shows five if it can.
- */
-function windowAround(board: BoardEntry[], userId: number): BoardEntry[] {
-  if (board.length <= 5) return board;
-  const i = board.findIndex((e) => e.userId === userId);
-  if (i < 0) return board.slice(0, 5);
-  const start = Math.min(Math.max(i - 2, 0), board.length - 5);
-  return board.slice(start, start + 5);
-}
+/** How long after someone scrolls the board it stays where they left it. */
+const HANDS_OFF_MS = 6000;
 
 /**
- * `full` is the board at the end of the night: everybody who played, rather
- * than the five-row window the live screen keeps around you.
+ * Everybody who is playing, in order.
+ *
+ * On the live screen the board shows five rows at a time and scrolls for the
+ * rest. It starts with you in the middle, the you-and-two-either-side view Rob
+ * first asked for, and follows you as your place changes, unless you have just
+ * scrolled it yourself to look at somebody else.
  */
 function Scoreboard({ state, full = false }: { state: EventState; full?: boolean }) {
-  const rows = full
-    ? state.leaderboard
-    : state.me.isQuestionMaster
-      ? state.leaderboard.slice(0, 5)
-      : windowAround(state.leaderboard, state.me.userId);
+  const rows = state.leaderboard;
+  const boardRef = useRef<HTMLDivElement>(null);
+  const meRef = useRef<HTMLDivElement>(null);
+  const touchedAt = useRef(0);
+  const myPlace = rows.find((e) => e.userId === state.me.userId)?.place;
+
+  useEffect(() => {
+    const board = boardRef.current;
+    const row = meRef.current;
+    if (full || !board || !row) return;
+    if (Date.now() - touchedAt.current < HANDS_OFF_MS) return;
+    // Set scrollTop rather than scrollIntoView, which would also nudge the page.
+    board.scrollTop = row.offsetTop - (board.clientHeight - row.offsetHeight) / 2;
+  }, [full, myPlace, rows.length]);
 
   if (rows.length === 0) return <div className="empty">Nobody is playing yet.</div>;
 
   const queued = new Set(state.queue.filter((b) => b.outcome === 'waiting').map((b) => b.userId));
+  const handsOff = () => {
+    touchedAt.current = Date.now();
+  };
 
   return (
-    <div className="board">
+    <div className={`board${!full && rows.length > 5 ? ' scrolls' : ''}`} ref={boardRef} onTouchMove={handsOff} onWheel={handsOff}>
       {rows.map((e) => {
         const isMe = e.userId === state.me.userId;
         const answering = state.answering?.userId === e.userId;
@@ -45,6 +53,7 @@ function Scoreboard({ state, full = false }: { state: EventState; full?: boolean
           <div
             className={`board-row${isMe ? ' me' : ''}${answering ? ' answering' : ''}`}
             key={e.userId}
+            ref={isMe ? meRef : undefined}
           >
             <span className="place">{e.place}</span>
             <span className="who">{e.username}</span>
@@ -85,6 +94,7 @@ export default function Event() {
   const id = Number(eventId);
   const navigate = useNavigate();
   const { state, error, connected, buzzPending, buzz, judge, run } = useEventState(id);
+  const confirm = useConfirm();
 
   // The moment the floor passes to you, in a room too loud to hear anything.
   const wasMine = useRef(false);
@@ -161,7 +171,13 @@ export default function Event() {
 
         {!finished &&
           (me.isParticipant ? (
-            <button className="block" onClick={() => run(() => api.leaveEvent(id)).then(() => navigate(`/groups/${event.groupId}`))}>
+            <button
+              className="block"
+              onClick={async () => {
+                if (await confirm({ title: 'Leave this quiz?', message: 'You can join again before it starts.', confirmLabel: 'Leave', danger: true }))
+                  run(() => api.leaveEvent(id)).then(() => navigate(`/groups/${event.groupId}`));
+              }}
+            >
               Leave this quiz
             </button>
           ) : (
@@ -213,6 +229,17 @@ export default function Event() {
   // ------------------------------------------------------------ live quiz --
   // The scoreboard sits above and the buzzer takes the bottom half of the
   // screen, where a thumb already is when the phone is held in one hand.
+  const finish = async () => {
+    if (
+      await confirm({
+        title: 'Finish this quiz?',
+        message: 'Everyone sees the final scores. It can be re-opened afterwards.',
+        confirmLabel: 'Finish',
+        danger: true,
+      })
+    )
+      run(() => api.finishEvent(id));
+  };
   const onJudge = (delta: 1 | 0 | -1) => {
     vibrate(JUDGED);
     judge(delta);
@@ -246,14 +273,26 @@ export default function Event() {
             <button className="small" onClick={() => run(() => api.nextQuestion(id))}>
               Skip
             </button>
-            <button className="small danger" onClick={() => run(() => api.finishEvent(id))}>
+            <button className="small danger" onClick={finish}>
               Finish
             </button>
           </div>
         ) : (
-          waiting.length > 0 && (
-            <div className="queue">Next up: {waiting.map((b) => b.username).join(' · ')}</div>
-          )
+          <>
+            {waiting.length > 0 && (
+              <div className="queue">Next up: {waiting.map((b) => b.username).join(' · ')}</div>
+            )}
+            {/* Group admins can call time too, say if the question master's
+                phone has died. */}
+            {me.isAdmin && (
+              <div className="qm-tools">
+                <span className="sub grow">You are a group admin.</span>
+                <button className="small danger" onClick={finish}>
+                  Finish quiz
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
 

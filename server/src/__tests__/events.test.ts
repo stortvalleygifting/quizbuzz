@@ -407,6 +407,19 @@ describe('the scoreboard', () => {
     const late = await buzz(eventId, players[0].token);
     expect(late.status).toBe(400);
   });
+
+  it('lets a group admin who is not the question master finish the quiz', async () => {
+    const { eventId, groupId, owner, players } = await liveEvent(['ann', 'bob']);
+    const [ann, bob] = players;
+    await request(app).post(`/api/groups/${groupId}/members/${ann.id}/role`).set(auth(owner.token)).send({ role: 'admin' });
+
+    expect((await state(eventId, ann.token)).me.isAdmin).toBe(true);
+    expect((await request(app).post(`/api/events/${eventId}/finish`).set(auth(bob.token))).status).toBe(403);
+
+    const finished = await request(app).post(`/api/events/${eventId}/finish`).set(auth(ann.token));
+    expect(finished.status).toBe(200);
+    expect(finished.body.state.event.status).toBe('finished');
+  });
 });
 
 describe('head to head', () => {

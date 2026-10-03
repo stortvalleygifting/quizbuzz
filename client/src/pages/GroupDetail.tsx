@@ -2,11 +2,13 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, type EventSummary, type GroupDetail as Detail } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { useConfirm } from '../lib/confirm';
 
 export default function GroupDetail() {
   const { groupId } = useParams();
   const id = Number(groupId);
   const { user } = useAuth();
+  const confirm = useConfirm();
   const navigate = useNavigate();
   const [detail, setDetail] = useState<Detail | null>(null);
   const [events, setEvents] = useState<EventSummary[]>([]);
@@ -91,7 +93,14 @@ export default function GroupDetail() {
               : 'You are not in this group yet.'}
           </p>
           {group.myStatus === 'pending' ? (
-            <button className="block" disabled={busy} onClick={() => act(() => api.withdraw(id))}>
+            <button
+              className="block"
+              disabled={busy}
+              onClick={async () => {
+                if (await confirm({ title: `Withdraw from ${group.name}?`, message: 'You can ask to join again later.', confirmLabel: 'Withdraw', danger: true }))
+                  act(() => api.withdraw(id));
+              }}
+            >
               Withdraw application
             </button>
           ) : (
@@ -226,7 +235,17 @@ export default function GroupDetail() {
                     <button
                       className="small danger"
                       disabled={busy}
-                      onClick={() => act(() => api.removeMember(id, m.id))}
+                      onClick={async () => {
+                        if (
+                          await confirm({
+                            title: `Remove ${m.username}?`,
+                            message: `They will have to ask to join ${group.name} again.`,
+                            confirmLabel: 'Remove',
+                            danger: true,
+                          })
+                        )
+                          act(() => api.removeMember(id, m.id));
+                      }}
                     >
                       Remove
                     </button>
@@ -239,7 +258,17 @@ export default function GroupDetail() {
           <button
             className="danger block"
             disabled={busy}
-            onClick={() => act(() => api.removeMember(id, user!.id), () => navigate('/'))}
+            onClick={async () => {
+              if (
+                await confirm({
+                  title: `Leave ${group.name}?`,
+                  message: 'You will have to ask to join again.',
+                  confirmLabel: 'Leave',
+                  danger: true,
+                })
+              )
+                act(() => api.removeMember(id, user!.id), () => navigate('/'));
+            }}
           >
             Leave group
           </button>
