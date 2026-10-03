@@ -151,7 +151,6 @@ a { color: var(--accent-bright); }
 }
 
 .board-half {
-  position: relative; /* holds the you-v-them pop-up during a live quiz */
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
@@ -429,18 +428,6 @@ a { color: var(--accent-bright); }
 .modal .sub { margin: 0 0 16px; }
 .modal-actions { display: flex; gap: 10px; }
 
-/* During a live quiz the you-v-them pop-up covers only the leaderboard, so
-   the BUZZ button below it can still be pressed. */
-.sheet-backdrop {
-  position: absolute;
-  inset: 0;
-  z-index: 20;
-  display: flex;
-  align-items: center;
-  padding: 4px 0;
-  background: rgba(5, 7, 16, 0.6);
-}
-.sheet-backdrop .modal { padding: 14px 16px; }
 .modal .row h2 { margin: 0; }
 .board-row.pickable { cursor: pointer; }
 
