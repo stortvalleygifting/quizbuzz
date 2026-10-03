@@ -454,3 +454,15 @@ a { color: var(--accent-bright); }
   user-select: all;
   -webkit-user-select: all;
 }
+
+/* Cards inside a pop-up sit one shade lighter so they still read as cards. */
+.modal .card { background: var(--surface-2); margin-bottom: 0; }
+/* Section headings inside a pop-up look like the page's own. */
+.modal h2.section {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 16px 0 8px;
+}
+.modal .card .sub { margin: 0; }

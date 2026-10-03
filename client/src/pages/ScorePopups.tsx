@@ -120,7 +120,8 @@ export function QuizRivalry({
           <div className="empty">Loading…</div>
         ) : (
           <>
-            <div className="tallies">
+            <h2 className="section">Score</h2>
+            <div className="card tallies">
               <Tally value={record.yourScore} label="you" tone={record.yourScore > record.theirScore ? 'good' : undefined} />
               <Tally
                 value={record.theirScore}
@@ -128,13 +129,23 @@ export function QuizRivalry({
                 tone={record.theirScore > record.yourScore ? 'bad' : undefined}
               />
             </div>
-            <div className="sub center">
-              {record.buzzer.contested === 0
-                ? 'You never both buzzed on the same question.'
-                : `Buzzer: you first ${record.buzzer.youFirst}, them first ${record.buzzer.themFirst}, out of ${
-                    record.buzzer.contested
-                  } ${record.buzzer.contested === 1 ? 'question' : 'questions'} you both buzzed on.`}
-            </div>
+
+            {/* The same card as the group page's head-to-head, for this quiz only. */}
+            <h2 className="section">Race to the buzzer</h2>
+            {record.buzzer.contested === 0 ? (
+              <div className="card empty">You never both buzzed on the same question.</div>
+            ) : (
+              <div className="card">
+                <div className="tallies">
+                  <Tally value={record.buzzer.youFirst} label="you first" tone="good" />
+                  <Tally value={record.buzzer.themFirst} label="them first" tone="bad" />
+                </div>
+                <div className="sub center">
+                  out of {record.buzzer.contested} {record.buzzer.contested === 1 ? 'question' : 'questions'} you both
+                  buzzed on
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>
