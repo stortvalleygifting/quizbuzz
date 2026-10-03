@@ -3,6 +3,22 @@ export interface User {
   username: string;
   /** When the account was registered, UTC ISO 8601. */
   signedUpAt: string;
+  /** Can see and manage every group, and reset passwords. */
+  isSiteAdmin?: boolean;
+}
+
+export interface AdminGroup {
+  id: number;
+  name: string;
+  memberCount: number;
+  pendingCount: number;
+  admins: string[];
+}
+
+export interface AdminUser {
+  id: number;
+  username: string;
+  signedUpAt: string;
 }
 
 export interface GroupSummary {
@@ -31,6 +47,8 @@ export interface GroupRequest {
 
 export interface GroupDetail {
   group: GroupSummary;
+  /** A system admin looking after a group they are not an admin of. */
+  viewingAsSiteAdmin?: boolean;
   members: GroupMember[];
   requests: GroupRequest[];
 }
@@ -154,6 +172,13 @@ export const api = {
   login: (username: string, password: string) =>
     post<{ token: string; user: User }>('/auth/login', { username, password }),
   me: () => request<{ user: User }>('/auth/me'),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    post<{ changed: true }>('/auth/password', { currentPassword, newPassword }),
+
+  adminGroups: () => request<{ groups: AdminGroup[] }>('/admin/groups'),
+  adminUsers: (q: string) => request<{ users: AdminUser[] }>(`/admin/users?q=${encodeURIComponent(q)}`),
+  resetPassword: (userId: number) =>
+    post<{ username: string; temporaryPassword: string }>(`/admin/users/${userId}/reset-password`),
 
   myGroups: () => request<{ groups: GroupSummary[]; pending: GroupSummary[] }>('/groups/mine'),
   searchGroups: (q: string) => request<{ groups: GroupSummary[] }>(`/groups/search?q=${encodeURIComponent(q)}`),

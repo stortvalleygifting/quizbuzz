@@ -23,7 +23,7 @@ export default function GroupDetail() {
     const d = await api.group(id);
     setDetail(d);
     // Only members can see the fixture list.
-    if (d.group.myStatus === 'approved') setEvents((await api.groupEvents(id)).events);
+    if (d.group.myStatus === 'approved' || d.viewingAsSiteAdmin) setEvents((await api.groupEvents(id)).events);
   }, [id]);
 
   useEffect(() => {
@@ -72,8 +72,11 @@ export default function GroupDetail() {
   }
 
   const { group, members, requests } = detail;
-  const isAdmin = group.myRole === 'admin';
-  const isMember = group.myStatus === 'approved';
+  const asSiteAdmin = Boolean(detail.viewingAsSiteAdmin);
+  const isAdmin = group.myRole === 'admin' || asSiteAdmin;
+  const isMember = group.myStatus === 'approved' || asSiteAdmin;
+  // You can only leave a group you actually joined.
+  const reallyMember = group.myStatus === 'approved';
 
   return (
     <div className="app">
@@ -82,7 +85,7 @@ export default function GroupDetail() {
           <button className="small">Back</button>
         </Link>
         <h1>{group.name}</h1>
-        {isAdmin && <span className="pill admin">Admin</span>}
+        {isAdmin && <span className="pill admin">{asSiteAdmin ? 'System admin' : 'Admin'}</span>}
       </div>
 
       {error && <div className="error">{error}</div>}
@@ -259,23 +262,25 @@ export default function GroupDetail() {
             })}
           </div>
 
-          <button
-            className="danger block"
-            disabled={busy}
-            onClick={async () => {
-              if (
-                await confirm({
-                  title: `Leave ${group.name}?`,
-                  message: 'You will have to ask to join again.',
-                  confirmLabel: 'Leave',
-                  danger: true,
-                })
-              )
-                act(() => api.removeMember(id, user!.id), () => navigate('/'));
-            }}
-          >
-            Leave group
-          </button>
+          {reallyMember && (
+            <button
+              className="danger block"
+              disabled={busy}
+              onClick={async () => {
+                if (
+                  await confirm({
+                    title: `Leave ${group.name}?`,
+                    message: 'You will have to ask to join again.',
+                    confirmLabel: 'Leave',
+                    danger: true,
+                  })
+                )
+                  act(() => api.removeMember(id, user!.id), () => navigate('/'));
+              }}
+            >
+              Leave group
+            </button>
+          )}
         </>
       )}
     </div>

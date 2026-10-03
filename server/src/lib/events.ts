@@ -1,6 +1,6 @@
 import { transaction, type DB } from './db.js';
 import { badRequest, conflict, forbidden, notFound } from './errors.js';
-import { getMembership } from './groups.js';
+import { effectiveMembership, getMembership } from './groups.js';
 
 export interface EventRow {
   id: number;
@@ -46,7 +46,7 @@ export function getEvent(db: DB, eventId: number): EventRow {
 
 /** The caller must be an approved member of the event's group. */
 export function requireEventMember(db: DB, event: EventRow, userId: number) {
-  const m = getMembership(db, event.group_id, userId);
+  const m = effectiveMembership(db, event.group_id, userId);
   if (!m || m.status !== 'approved') throw forbidden('You need to be in this group to see its events.');
   return m;
 }
@@ -71,7 +71,7 @@ export function isParticipant(db: DB, eventId: number, userId: number): boolean 
 
 /** Anyone in the group may watch; the state shown just depends on who they are. */
 export function canWatch(db: DB, event: EventRow, userId: number): boolean {
-  const m = getMembership(db, event.group_id, userId);
+  const m = effectiveMembership(db, event.group_id, userId);
   return m?.status === 'approved';
 }
 
@@ -294,7 +294,7 @@ export interface EventState {
 /** The single payload every screen renders from, over REST and over sockets alike. */
 export function buildState(db: DB, eventId: number, viewerId: number): EventState {
   const event = getEvent(db, eventId);
-  const membership = getMembership(db, event.group_id, viewerId);
+  const membership = effectiveMembership(db, event.group_id, viewerId);
   if (membership?.status !== 'approved') throw forbidden('You need to be in this group to see its events.');
 
   const group = db.prepare('SELECT name FROM groups WHERE id = ?').get(event.group_id) as { name: string };

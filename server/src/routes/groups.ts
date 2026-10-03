@@ -6,6 +6,7 @@ import { badRequest, conflict, notFound } from '../lib/errors.js';
 import { createGroupSchema, parseBody, parseId } from '../lib/validation.js';
 import {
   countAdmins,
+  effectiveMembership,
   getGroup,
   getMembership,
   requireAdmin,
@@ -127,9 +128,12 @@ groupsRouter.get(
     getGroup(db, groupId);
 
     const row = db.prepare(`${SUMMARY_SELECT} WHERE g.id = @id`).get({ me, id: groupId }) as unknown as GroupSummaryRow;
-    const membership = getMembership(db, groupId, me);
+    const membership = effectiveMembership(db, groupId, me);
     const isMember = membership?.status === 'approved';
     const isAdmin = isMember && membership.role === 'admin';
+    // A system admin looking after a group they never joined.
+    const actual = getMembership(db, groupId, me);
+    const viewingAsSiteAdmin = isAdmin && !(actual?.status === 'approved' && actual.role === 'admin');
 
     const members = isMember
       ? (db
@@ -155,6 +159,7 @@ groupsRouter.get(
 
     res.json({
       group: summarize(row),
+      viewingAsSiteAdmin,
       members: members.map((m) => ({
         id: m.id,
         username: m.username,
