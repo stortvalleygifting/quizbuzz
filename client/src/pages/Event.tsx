@@ -174,15 +174,16 @@ export default function Event() {
 
   const { event, me, answering, queue } = state;
   const boardActions = {
+    // Head-to-head only once the quiz is over, so nobody is distracted mid-game.
     onTap:
-      me.isParticipant && !me.isQuestionMaster
+      event.status === 'finished' && me.isParticipant && !me.isQuestionMaster
         ? (entry: BoardEntry) => setPicked({ entry, kind: 'rivalry' })
         : undefined,
     onHold: me.isQuestionMaster ? (entry: BoardEntry) => setPicked({ entry, kind: 'adjust' }) : undefined,
   };
-  const popup = (inBoard: boolean) =>
+  const popup = () =>
     picked?.kind === 'rivalry' ? (
-      <QuizRivalry eventId={id} entry={picked.entry} inBoard={inBoard} onClose={() => setPicked(null)} />
+      <QuizRivalry eventId={id} entry={picked.entry} onClose={() => setPicked(null)} />
     ) : picked?.kind === 'adjust' ? (
       <AdjustScore
         entry={picked.entry}
@@ -240,7 +241,7 @@ export default function Event() {
                 Re-open this quiz
               </button>
             )}
-            {popup(false)}
+            {popup()}
           </>
         )}
 
@@ -335,7 +336,6 @@ export default function Event() {
         {error && <div className="error thin">{error}</div>}
 
         <Scoreboard state={state} {...boardActions} />
-        {picked?.kind === 'rivalry' && popup(true)}
 
         {me.isQuestionMaster ? (
           <div className="qm-tools">
@@ -415,7 +415,7 @@ export default function Event() {
           </button>
         )}
       </div>
-      {picked?.kind === 'adjust' && popup(false)}
+      {picked?.kind === 'adjust' && popup()}
     </div>
   );
 }

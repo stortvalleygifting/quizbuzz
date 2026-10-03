@@ -565,6 +565,11 @@ describe('one quiz head to head', () => {
     await buzz(eventId, bob.token);
     await judge(eventId, owner.token, 1);
 
+    // Not while the quiz is still going.
+    const early = await request(app).get(`/api/events/${eventId}/head-to-head/${bob.id}`).set(auth(ann.token));
+    expect(early.body.code).toBe('not_finished');
+    await request(app).post(`/api/events/${eventId}/finish`).set(auth(owner.token));
+
     const r = await request(app).get(`/api/events/${eventId}/head-to-head/${bob.id}`).set(auth(ann.token));
     expect(r.status).toBe(200);
     expect(r.body.headToHead).toEqual({

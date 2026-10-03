@@ -327,7 +327,7 @@ eventsRouter.post(
   }),
 );
 
-/** You against one other player, in this quiz only (tap their name). */
+/** You against one other player, in this quiz only (tap their name on the final scores). */
 eventsRouter.get(
   '/events/:eventId/head-to-head/:userId',
   asyncHandler(async (req, res) => {
@@ -338,6 +338,12 @@ eventsRouter.get(
     const event = getEvent(db, eventId);
     if (!canWatch(db, event, me)) throw forbidden('You need to be in this group.');
     if (themId === me) throw badRequest('That is you.', 'self');
+    if (event.status !== 'finished') {
+      throw badRequest('Head-to-head opens once the quiz has finished.', 'not_finished');
+    }
+    if (event.status !== 'finished') {
+      throw badRequest('Head-to-head opens once the quiz has finished.', 'not_finished');
+    }
     res.json({ headToHead: getQuizHeadToHead(db, eventId, me, themId) });
   }),
 );

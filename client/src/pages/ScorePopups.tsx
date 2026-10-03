@@ -84,18 +84,15 @@ export function AdjustScore({
 
 /**
  * You against one other player, in this quiz only: the scores and who got to
- * the buzzer first. During a live quiz it covers only the leaderboard, so the
- * BUZZ button underneath stays usable while it is open.
+ * the buzzer first. Offered on the final scores, not during the quiz.
  */
 export function QuizRivalry({
   eventId,
   entry,
-  inBoard,
   onClose,
 }: {
   eventId: number;
   entry: BoardEntry;
-  inBoard: boolean;
   onClose: () => void;
 }) {
   const [record, setRecord] = useState<QuizHeadToHead | null>(null);
@@ -109,8 +106,8 @@ export function QuizRivalry({
   }, [eventId, entry.userId]);
 
   return (
-    <div className={inBoard ? 'sheet-backdrop' : 'modal-backdrop'} onClick={onClose}>
-      <div className="modal" role="dialog" aria-modal={!inBoard} onClick={(e) => e.stopPropagation()}>
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         <div className="row">
           <h2 className="grow">You v {entry.username}</h2>
           <button className="small" onClick={onClose}>
@@ -133,7 +130,7 @@ export function QuizRivalry({
             </div>
             <div className="sub center">
               {record.buzzer.contested === 0
-                ? 'You have not both buzzed on the same question yet.'
+                ? 'You never both buzzed on the same question.'
                 : `Buzzer: you first ${record.buzzer.youFirst}, them first ${record.buzzer.themFirst}, out of ${
                     record.buzzer.contested
                   } ${record.buzzer.contested === 1 ? 'question' : 'questions'} you both buzzed on.`}
