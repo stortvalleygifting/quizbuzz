@@ -471,13 +471,16 @@ a { color: var(--accent-bright); }
 
 .modal.rules { max-height: 90vh; overflow-y: auto; }
 .presets { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
-.points-table { display: flex; flex-direction: column; gap: 8px; }
-.points-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 8px; }
+/* One grid for the whole table, so the Right / Wrong headings share their
+   columns with the steppers beneath them. */
+.points-table { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px 6px; }
+.points-row { display: contents; }
 .points-row.head { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; text-align: center; }
+.points-row.head span:first-child { text-align: left; }
 .points-row .sub { margin: 0; }
-.stepper { display: flex; align-items: center; gap: 4px; }
-.stepper button { width: 32px; height: 32px; padding: 0; }
-.stepper-value { min-width: 34px; text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stepper { display: flex; align-items: center; justify-content: center; gap: 2px; }
+.stepper button { width: 30px; height: 32px; padding: 0; }
+.stepper-value { width: 36px; text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }
 .choice { cursor: pointer; align-items: flex-start; }
 .choice input { flex: 0 0 auto; width: 20px; height: 20px; padding: 0; margin: 2px 0 0; accent-color: var(--accent-bright); }
 .choice .name { white-space: normal; }
