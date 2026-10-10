@@ -481,11 +481,13 @@ export default function Event() {
             onClick={buzz}
           >
             <div className="buzz-name">{answering.team.name}</div>
+            {/* Your own team: who is answering matters as much as which team. */}
+            {ourTurn && <div className="buzz-name">{answering.username}</div>}
             <div className="buzz-sub">
               {mine
                 ? 'Your answer — go!'
                 : ourTurn
-                  ? `${answering.username} is answering for your team`
+                  ? 'is answering for your team'
                   : inQueue
                     ? `${answering.username} is answering · your team is ${ordinal(myPlaceInQueue)} in the queue`
                     : teamIn || !queueing
