@@ -4,7 +4,7 @@ import type { GameRules, Points, SecondBuzz } from '../lib/api';
 /** +3, 0, −1: the way a score change reads on a button. */
 export const signed = (n: number): string => (n > 0 ? `+${n}` : n < 0 ? `−${-n}` : '0');
 
-const POSITIONS = ['1st answer', '2nd answer', '3rd and later'];
+const POSITIONS = ['1st', '2nd', '3rd+'];
 
 const SECOND_BUZZ: { value: SecondBuzz; label: string; detail: string }[] = [
   {
@@ -142,15 +142,15 @@ export function RulesEditor({
         </div>
         <div className="card points-table">
           <div className="points-row head">
-            <span />
+            <span>Answer</span>
             <span>Right</span>
             <span>Wrong</span>
           </div>
           {draft.points.map((p, i) => (
             <div className="points-row" key={i}>
               <span className="sub">{POSITIONS[i]}</span>
-              <Stepper value={p.right} onChange={(right) => setPoints(i, { right })} label={`${POSITIONS[i]} right`} />
-              <Stepper value={p.wrong} onChange={(wrong) => setPoints(i, { wrong })} label={`${POSITIONS[i]} wrong`} />
+              <Stepper value={p.right} onChange={(right) => setPoints(i, { right })} label={`${POSITIONS[i]} answer right`} />
+              <Stepper value={p.wrong} onChange={(wrong) => setPoints(i, { wrong })} label={`${POSITIONS[i]} answer wrong`} />
             </div>
           ))}
         </div>
