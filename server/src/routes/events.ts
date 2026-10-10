@@ -25,6 +25,7 @@ import {
   type Judgement,
 } from '../lib/events.js';
 import { broadcastEvent } from '../lib/realtime.js';
+import { setRules } from '../lib/rules.js';
 
 export const eventsRouter = Router();
 eventsRouter.use(requireAuth);
@@ -289,7 +290,7 @@ eventsRouter.post(
   }),
 );
 
-/** Question master: +1, 0 or -1 for whoever is answering. */
+/** Question master: right (1), pass (0) or wrong (-1) for whoever is answering. */
 const judgeSchema = z.object({ delta: z.union([z.literal(1), z.literal(0), z.literal(-1)]) });
 eventsRouter.post(
   '/events/:eventId/judge',
@@ -368,6 +369,35 @@ eventsRouter.post(
       openNextQuestion(db, eventId);
     });
 
+    await broadcastEvent(eventId);
+    res.json({ state: buildState(db, eventId, me) });
+  }),
+);
+
+/**
+ * Admin or question master: set how this quiz is played. Allowed at any point
+ * until it finishes, so the points can change between rounds.
+ */
+const pointsSchema = z.object({
+  right: z.number().int().min(-100, 'Points go from -100 to 100.').max(100, 'Points go from -100 to 100.'),
+  wrong: z.number().int().min(-100, 'Points go from -100 to 100.').max(100, 'Points go from -100 to 100.'),
+});
+const rulesSchema = z.object({
+  secondBuzz: z.enum(['queue', 'reopen', 'one_shot']),
+  points: z.tuple([pointsSchema, pointsSchema, pointsSchema]),
+});
+eventsRouter.post(
+  '/events/:eventId/rules',
+  asyncHandler(async (req, res) => {
+    const eventId = parseId(req.params.eventId, 'event');
+    const rules = parseBody(rulesSchema, req.body);
+    const me = req.user!.uid;
+    const db = getDb();
+    const event = getEvent(db, eventId);
+    if (event.question_master_id !== me) requireEventAdmin(db, event, me);
+    if (event.status === 'finished') throw badRequest('That quiz has finished.', 'finished');
+
+    setRules(db, eventId, rules);
     await broadcastEvent(eventId);
     res.json({ state: buildState(db, eventId, me) });
   }),

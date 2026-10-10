@@ -466,3 +466,27 @@ a { color: var(--accent-bright); }
   margin: 16px 0 8px;
 }
 .modal .card .sub { margin: 0; }
+
+/* ------------------------------------------------------------ game rules -- */
+
+.modal.rules { max-height: 90vh; overflow-y: auto; }
+.presets { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.points-table { display: flex; flex-direction: column; gap: 8px; }
+.points-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 8px; }
+.points-row.head { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; text-align: center; }
+.points-row .sub { margin: 0; }
+.stepper { display: flex; align-items: center; gap: 4px; }
+.stepper button { width: 32px; height: 32px; padding: 0; }
+.stepper-value { min-width: 34px; text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }
+.choice { cursor: pointer; align-items: flex-start; }
+.choice input { flex: 0 0 auto; width: 20px; height: 20px; padding: 0; margin: 2px 0 0; accent-color: var(--accent-bright); }
+.choice .name { white-space: normal; }
+.modal .list .sub { margin: 0; }
+.rules-line { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.rules-line .sub { flex: 1; min-width: 0; }
+
+/* The judge buttons say what each verdict is worth for whoever is answering. */
+.judge-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+.judge-word { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.8; }
+.qm-position { display: block; font-size: 14px; font-weight: 600; color: var(--muted); }
+.qm-name { flex-direction: column; }
