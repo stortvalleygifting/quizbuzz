@@ -638,7 +638,8 @@ describe('game rules', () => {
   it('starts every quiz on Classic: the queue, +1 and -1', async () => {
     const { eventId, players } = await liveEvent(['ann']);
     const s = await state(eventId, players[0].token);
-    expect(s.rules).toEqual({ secondBuzz: 'queue', points: flat(1, -1) });
+    expect(s.rules).toEqual({ playAs: 'individuals', secondBuzz: 'queue', points: flat(1, -1) });
+    expect(s.teams).toEqual([]);
   });
 
   it('scores by answer position: 1st, 2nd, then 3rd and later', async () => {
@@ -739,5 +740,188 @@ describe('game rules', () => {
 
     await request(app).post(`/api/events/${eventId}/finish`).set(auth(owner.token));
     expect((await setRules(eventId, owner.token, ok)).status).toBe(400);
+  });
+});
+
+describe('teams', () => {
+  const rules = (playAs: string, secondBuzz = 'queue') => ({
+    playAs,
+    secondBuzz,
+    points: [
+      { right: 1, wrong: -1 },
+      { right: 1, wrong: -1 },
+      { right: 1, wrong: -1 },
+    ],
+  });
+  const setRules = (eventId: number, token: string, body: unknown) =>
+    request(app).post(`/api/events/${eventId}/rules`).set(auth(token)).send(body);
+  const createTeam = (eventId: number, token: string, name: string) =>
+    request(app).post(`/api/events/${eventId}/teams`).set(auth(token)).send({ name });
+  const joinTeam = (eventId: number, token: string, teamId: number) =>
+    request(app).post(`/api/events/${eventId}/teams/${teamId}/join`).set(auth(token));
+
+  /** A group with players, an event in team mode that has not started, and the owner as question master. */
+  async function teamLobby(names: string[]) {
+    const owner = await register('owner');
+    const groupId = (await request(app).post('/api/groups').set(auth(owner.token)).send({ name: 'Tuesday Quiz' }))
+      .body.group.id as number;
+    const players: Player[] = [];
+    for (const name of names) {
+      const p = await register(name);
+      await request(app).post(`/api/groups/${groupId}/apply`).set(auth(p.token));
+      await request(app).post(`/api/groups/${groupId}/members/${p.id}/approve`).set(auth(owner.token));
+      players.push(p);
+    }
+    const eventId = (
+      await request(app).post(`/api/groups/${groupId}/events`).set(auth(owner.token)).send({ name: 'Team night' })
+    ).body.event.id as number;
+    for (const p of players) await request(app).post(`/api/events/${eventId}/join`).set(auth(p.token));
+    await request(app).post(`/api/events/${eventId}/question-master`).set(auth(owner.token)).send({ userId: owner.id });
+    expect((await setRules(eventId, owner.token, rules('teams'))).status).toBe(200);
+    return { owner, groupId, eventId, players };
+  }
+  const start = (eventId: number, token: string) => request(app).post(`/api/events/${eventId}/start`).set(auth(token));
+
+  it('only allows teams once the question master has switched the quiz to teams', async () => {
+    const { eventId, players } = await liveEvent(['ann']);
+    const refused = await createTeam(eventId, players[0].token, 'Quizzly Bears');
+    expect(refused.status).toBe(400);
+    expect(refused.body.code).toBe('not_teams');
+  });
+
+  it('only lets an admin or the question master switch to teams, and only before the start', async () => {
+    const { eventId, owner, players } = await liveEvent(['ann']);
+    expect((await setRules(eventId, players[0].token, rules('teams'))).status).toBe(403);
+    expect((await setRules(eventId, owner.token, rules('teams'))).status).toBe(409);
+    // Points can still change mid-quiz without saying how it is played.
+    const { playAs: _, ...noMode } = rules('teams');
+    expect((await setRules(eventId, owner.token, noMode)).status).toBe(200);
+  });
+
+  it('lets players create, name, join and leave teams', async () => {
+    const { eventId, players } = await teamLobby(['ann', 'bob', 'cat']);
+    const [ann, bob, cat] = players;
+
+    const made = await createTeam(eventId, ann.token, '  Quizzly   Bears ');
+    expect(made.status).toBe(201);
+    const team = made.body.state.teams[0];
+    expect(team.name).toBe('Quizzly Bears');
+    expect(team.members.map((m: { username: string }) => m.username)).toEqual(['ann']);
+    expect(made.body.state.me.teamId).toBe(team.id);
+
+    expect((await createTeam(eventId, bob.token, 'quizzly bears')).body.code).toBe('name_taken');
+    await joinTeam(eventId, bob.token, team.id);
+    await createTeam(eventId, cat.token, 'Brainiacs');
+
+    // Ann leaves; the team carries on with Bob.
+    await request(app).delete(`/api/events/${eventId}/team`).set(auth(ann.token));
+    let s = await state(eventId, ann.token);
+    expect(s.me.teamId).toBeNull();
+    expect(s.teams.find((t: { name: string }) => t.name === 'Quizzly Bears').members).toHaveLength(1);
+
+    // Bob moves to Cat's team, so his old one, now empty, goes.
+    await joinTeam(eventId, bob.token, s.teams.find((t: { name: string }) => t.name === 'Brainiacs').id);
+    s = await state(eventId, ann.token);
+    expect(s.teams.map((t: { name: string }) => t.name)).toEqual(['Brainiacs']);
+  });
+
+  it('shuffles everyone into even random teams for the question master', async () => {
+    const { eventId, owner, players } = await teamLobby(['ann', 'bob', 'cat', 'dan', 'eve']);
+    expect((await request(app).post(`/api/events/${eventId}/teams/random`).set(auth(players[0].token)).send({ count: 2 })).status).toBe(403);
+
+    const shuffled = await request(app).post(`/api/events/${eventId}/teams/random`).set(auth(owner.token)).send({ count: 2 });
+    expect(shuffled.status).toBe(200);
+    const teams = shuffled.body.state.teams as { name: string; members: unknown[] }[];
+    expect(teams.map((t) => t.name).sort()).toEqual(['Blue', 'Red']);
+    expect(teams.map((t) => t.members.length).sort()).toEqual([2, 3]);
+    // The question master is not on a team.
+    expect(shuffled.body.state.me.teamId).toBeNull();
+  });
+
+  it('counts only the first buzz from each team, and scores the team', async () => {
+    const { eventId, owner, players } = await teamLobby(['ann', 'bob', 'cat', 'dan']);
+    const [ann, bob, cat, dan] = players;
+    const reds = (await createTeam(eventId, ann.token, 'Reds')).body.state.teams[0].id;
+    await joinTeam(eventId, bob.token, reds);
+    const blues = (await createTeam(eventId, cat.token, 'Blues')).body.state.teams.find((t: { name: string }) => t.name === 'Blues').id;
+    await joinTeam(eventId, dan.token, blues);
+    await start(eventId, owner.token);
+
+    await buzz(eventId, bob.token);
+    await buzz(eventId, ann.token); // a teammate: ignored
+    await buzz(eventId, dan.token);
+    let s = await state(eventId, owner.token);
+    expect(s.queue.map((b: { username: string }) => b.username)).toEqual(['bob', 'dan']);
+    expect(s.answering.team.name).toBe('Reds');
+
+    await judge(eventId, owner.token, -1);
+    await judge(eventId, owner.token, 1);
+    s = await state(eventId, ann.token);
+    expect(s.teams.map((t: { name: string; score: number }) => [t.name, t.score])).toEqual([
+      ['Blues', 1],
+      ['Reds', -1],
+    ]);
+  });
+
+  it('keeps players without a team off the buzzer, and locks teams once the quiz starts', async () => {
+    const { eventId, owner, players } = await teamLobby(['ann', 'bob', 'cat']);
+    const [ann, bob, cat] = players;
+    const team = (await createTeam(eventId, ann.token, 'Reds')).body.state.teams[0].id;
+    await createTeam(eventId, bob.token, 'Blues');
+    await start(eventId, owner.token);
+
+    expect((await buzz(eventId, cat.token)).body.code).toBe('no_team');
+    expect((await joinTeam(eventId, bob.token, team)).body.code).toBe('teams_locked');
+    // A late pick is fine.
+    expect((await joinTeam(eventId, cat.token, team)).status).toBe(200);
+    // The question master can still move someone.
+    const moved = await request(app)
+      .post(`/api/events/${eventId}/teams/move`)
+      .set(auth(owner.token))
+      .send({ userId: bob.id, teamId: team });
+    expect(moved.status).toBe(200);
+    expect(moved.body.state.teams).toHaveLength(1);
+  });
+
+  it('re-open in teams ends the question once every team has had a go', async () => {
+    const { eventId, owner, players } = await teamLobby(['ann', 'bob']);
+    await setRules(eventId, owner.token, rules('teams', 'reopen'));
+    await createTeam(eventId, players[0].token, 'Reds');
+    await createTeam(eventId, players[1].token, 'Blues');
+    await start(eventId, owner.token);
+
+    await buzz(eventId, players[0].token);
+    await judge(eventId, owner.token, -1);
+    expect((await state(eventId, owner.token)).question.seq).toBe(1);
+    await buzz(eventId, players[1].token);
+    await judge(eventId, owner.token, -1);
+    expect((await state(eventId, owner.token)).question.seq).toBe(2);
+  });
+
+  it('leaves team quizzes out of head-to-head', async () => {
+    const { eventId, owner, groupId, players } = await teamLobby(['ann', 'bob']);
+    const [ann, bob] = players;
+    await createTeam(eventId, ann.token, 'Reds');
+    await createTeam(eventId, bob.token, 'Blues');
+    await start(eventId, owner.token);
+    await buzz(eventId, ann.token);
+    await buzz(eventId, bob.token);
+    await judge(eventId, owner.token, 1);
+    await request(app).post(`/api/events/${eventId}/finish`).set(auth(owner.token));
+
+    const h2h = (await request(app).get(`/api/groups/${groupId}/head-to-head/${bob.id}`).set(auth(ann.token))).body
+      .headToHead;
+    expect(h2h.quizzes.played).toBe(0);
+    expect(h2h.buzzer.contested).toBe(0);
+    const quiz = await request(app).get(`/api/events/${eventId}/head-to-head/${bob.id}`).set(auth(ann.token));
+    expect(quiz.body.code).toBe('team_quiz');
+  });
+
+  it('drops the teams when the quiz goes back to individuals', async () => {
+    const { eventId, owner, players } = await teamLobby(['ann']);
+    await createTeam(eventId, players[0].token, 'Reds');
+    const back = await setRules(eventId, owner.token, rules('individuals'));
+    expect(back.body.state.teams).toEqual([]);
+    expect(back.body.state.me.teamId).toBeNull();
   });
 });

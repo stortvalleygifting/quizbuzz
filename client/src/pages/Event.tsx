@@ -6,6 +6,7 @@ import { useEventState } from '../lib/useEventState';
 import { JUDGED, YOUR_TURN, vibrate } from '../lib/haptics';
 import { AdjustScore, QuizRivalry, useHold } from './ScorePopups';
 import { RulesEditor, rulesSummary, signed } from './GameRules';
+import { PickTeamModal, TeamBoard, TeamDot, TeamsPanel } from './Teams';
 
 const ordinal = (n: number): string => {
   const suffix = n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th';
@@ -158,6 +159,7 @@ export default function Event() {
   // fixing a score) on the leaderboard.
   const [picked, setPicked] = useState<{ entry: BoardEntry; kind: 'rivalry' | 'adjust' } | null>(null);
   const [editingRules, setEditingRules] = useState(false);
+  const [pickingTeam, setPickingTeam] = useState(false);
 
   // The moment the floor passes to you, in a room too loud to hear anything.
   const wasMine = useRef(false);
@@ -182,10 +184,13 @@ export default function Event() {
   }
 
   const { event, me, answering, queue } = state;
+  const teamQuiz = state.rules.playAs === 'teams';
+  const myTeam = state.teams.find((t) => t.id === me.teamId);
   const boardActions = {
-    // Head-to-head only once the quiz is over, so nobody is distracted mid-game.
+    // Head-to-head only once the quiz is over, so nobody is distracted mid-game,
+    // and never for team quizzes, which don't count towards it.
     onTap:
-      event.status === 'finished' && me.isParticipant && !me.isQuestionMaster
+      event.status === 'finished' && me.isParticipant && !me.isQuestionMaster && !teamQuiz
         ? (entry: BoardEntry) => setPicked({ entry, kind: 'rivalry' })
         : undefined,
     onHold: me.isQuestionMaster ? (entry: BoardEntry) => setPicked({ entry, kind: 'adjust' }) : undefined,
@@ -216,11 +221,21 @@ export default function Event() {
         }}
       />
     );
+  const board = (full = false) =>
+    teamQuiz ? (
+      <TeamBoard state={state} full={full} onHoldMember={boardActions.onHold} />
+    ) : (
+      <Scoreboard state={state} full={full} {...boardActions} />
+    );
   const waiting = queue.filter((b) => b.outcome === 'waiting');
   // Your place among the people still to be heard, so 1st means you are next
   // up — the same order the "Next up" line lists. 0 if you are not waiting:
   // either you never buzzed, or the question master has already been to you.
-  const myPlaceInQueue = waiting.findIndex((b) => b.userId === me.userId) + 1;
+  const myPlaceInQueue =
+    waiting.findIndex((b) => (teamQuiz && me.teamId !== null ? b.team?.id === me.teamId : b.userId === me.userId)) + 1;
+  // In a team quiz, someone on your team has already buzzed on this question.
+  const teamIn = teamQuiz && me.teamId !== null && queue.some((b) => b.team?.id === me.teamId);
+  const ourTurn = teamQuiz && me.teamId !== null && answering?.team?.id === me.teamId;
   const inQueue = myPlaceInQueue > 0;
 
   // ------------------------------------------------ before the quiz starts --
@@ -264,9 +279,7 @@ export default function Event() {
         {finished && (
           <>
             <h2>Final scores</h2>
-            <div className="card">
-              <Scoreboard state={state} full {...boardActions} />
-            </div>
+            <div className="card">{board(true)}</div>
             {(me.isQuestionMaster || me.isAdmin) && (
               <button className="primary block" onClick={() => run(() => api.reopenEvent(id))}>
                 Re-open this quiz
@@ -292,6 +305,8 @@ export default function Event() {
               Join this quiz
             </button>
           ))}
+
+        {!finished && teamQuiz && <TeamsPanel state={state} eventId={id} run={run} />}
 
         {!finished && (
           <>
@@ -365,13 +380,19 @@ export default function Event() {
             ‹
           </Link>
           <span className="grow">{event.name}</span>
+          {myTeam && (
+            <span className="my-team">
+              <TeamDot colour={myTeam.colour} />
+              {myTeam.name}
+            </span>
+          )}
           <span className="qno">Q{state.question?.seq ?? '–'}</span>
         </div>
 
         {!connected && <div className="netbar">Reconnecting… your buzz may not count yet.</div>}
         {error && <div className="error thin">{error}</div>}
 
-        <Scoreboard state={state} {...boardActions} />
+        {board()}
 
         {me.isQuestionMaster ? (
           <div className="qm-tools">
@@ -395,7 +416,9 @@ export default function Event() {
         ) : (
           <>
             {waiting.length > 0 && (
-              <div className="queue">Next up: {waiting.map((b) => b.username).join(' · ')}</div>
+              <div className="queue">
+                Next up: {waiting.map((b) => (teamQuiz && b.team ? `${b.team.name} (${b.username})` : b.username)).join(' · ')}
+              </div>
             )}
             {/* Group admins can call time too, say if the question master's
                 phone has died. */}
@@ -417,6 +440,12 @@ export default function Event() {
             <div className="qm-panel">
               <div className="qm-name">
                 {answering.username}
+                {answering.team && (
+                  <span className="qm-team">
+                    <TeamDot colour={answering.team.colour} />
+                    {answering.team.name}
+                  </span>
+                )}
                 <span className="qm-position">
                   {ANSWER_POSITION[answering.position - 1] ?? `${ordinal(answering.position)} answer`}
                 </span>
@@ -436,6 +465,35 @@ export default function Event() {
           <button className="buzz join" onClick={() => run(() => api.joinEvent(id))}>
             <span className="buzz-word">JOIN IN</span>
             <span className="buzz-sub">You are watching. Tap to play.</span>
+          </button>
+        ) : teamQuiz && !myTeam ? (
+          <button className="buzz join" onClick={() => setPickingTeam(true)}>
+            <span className="buzz-word">PICK A TEAM</span>
+            <span className="buzz-sub">Join a team to buzz in.</span>
+          </button>
+        ) : answering && answering.team && teamQuiz ? (
+          // A team quiz: the button shows the team that has the floor, and a
+          // teammate's buzz after your team's first one doesn't count.
+          <button
+            className={`buzzed team${ourTurn ? ' mine' : inQueue ? ' queued' : ''}`}
+            style={ourTurn || inQueue ? undefined : { borderColor: answering.team.colour }}
+            disabled={teamIn || !queueing}
+            onClick={buzz}
+          >
+            <div className="buzz-name">{answering.team.name}</div>
+            {/* Your own team: who is answering matters as much as which team. */}
+            {ourTurn && <div className="buzz-name">{answering.username}</div>}
+            <div className="buzz-sub">
+              {mine
+                ? 'Your answer — go!'
+                : ourTurn
+                  ? 'is answering for your team'
+                  : inQueue
+                    ? `${answering.username} is answering · your team is ${ordinal(myPlaceInQueue)} in the queue`
+                    : teamIn || !queueing
+                      ? `${answering.username} is answering`
+                      : `${answering.username} is answering · tap to queue for your team`}
+            </div>
           </button>
         ) : answering ? (
           // The button shows whoever got in first, but with the queue it still
@@ -460,11 +518,12 @@ export default function Event() {
                       : 'is answering · tap to join the queue'}
             </div>
           </button>
-        ) : me.hasBuzzed ? (
-          // Re-open: you have had your go at this one, and the rest still can.
+        ) : me.hasBuzzed || teamIn ? (
+          // Re-open: you (or your team) have had your go at this one, and the
+          // rest still can.
           <button className="buzz" disabled>
             <span className="buzz-word">WAIT</span>
-            <span className="buzz-sub">You've had your go at this question</span>
+            <span className="buzz-sub">{teamQuiz ? 'Your team has had its go at this question' : "You've had your go at this question"}</span>
           </button>
         ) : (
           <button className={`buzz${buzzPending ? ' pending' : ''}`} onClick={buzz}>
@@ -475,6 +534,7 @@ export default function Event() {
       </div>
       {picked?.kind === 'adjust' && popup()}
       {rulesPopup()}
+      {pickingTeam && <PickTeamModal state={state} eventId={id} run={run} onClose={() => setPickingTeam(false)} />}
     </div>
   );
 }

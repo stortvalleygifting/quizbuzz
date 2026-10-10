@@ -51,7 +51,8 @@ export function rulesSummary(rules: GameRules): string {
       ? `${signed(first.right)} right, ${signed(first.wrong)} wrong`
       : [first, second, rest].map((p, i) => `${['1st', '2nd', '3rd+'][i]} ${signed(p.right)}/${signed(p.wrong)}`).join(', ');
   const buzz = SECOND_BUZZ.find((b) => b.value === rules.secondBuzz)?.label ?? '';
-  return `${preset && preset.name !== 'Classic' ? `${preset.name}: ` : ''}${points} · ${buzz}`;
+  const teams = rules.playAs === 'teams' ? 'Teams · ' : '';
+  return `${teams}${preset && preset.name !== 'Classic' ? `${preset.name}: ` : ''}${points} · ${buzz}`;
 }
 
 function Stepper({ value, onChange, label }: { value: number; onChange: (n: number) => void; label: string }) {
@@ -98,6 +99,34 @@ export function RulesEditor({
       <div className="modal rules" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         <h2>Game rules</h2>
         {live && <div className="sub">Changes count from the next answer you score.</div>}
+
+        <h2 className="section">Play as</h2>
+        <div className="card list">
+          {(
+            [
+              ['individuals', 'Individuals', 'Everyone plays for themselves.'],
+              ['teams', 'Teams', 'Players make or join teams. Only the first buzz from each team counts.'],
+            ] as const
+          ).map(([value, label, detail]) => (
+            <label className="row choice" key={value}>
+              <input
+                type="radio"
+                name="play-as"
+                disabled={live}
+                checked={draft.playAs === value}
+                onChange={() => setDraft((d) => ({ ...d, playAs: value }))}
+              />
+              <div className="grow">
+                <div className="name">{label}</div>
+                <div className="sub">{detail}</div>
+              </div>
+            </label>
+          ))}
+        </div>
+        {live && <div className="sub">Teams or individuals is fixed once the quiz has started.</div>}
+        {!live && rules.playAs === 'teams' && draft.playAs === 'individuals' && (
+          <div className="sub">Switching back to individuals breaks up the teams already made.</div>
+        )}
 
         <h2 className="section">Points</h2>
         <div className="presets">

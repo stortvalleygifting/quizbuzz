@@ -138,4 +138,28 @@ CREATE TABLE IF NOT EXISTS event_points (
   wrong_points INTEGER NOT NULL,
   PRIMARY KEY (event_id, position)
 );
+
+-- ------------------------------------------------------------------- teams --
+-- Teams belong to one quiz, and only exist once the question master has
+-- switched that quiz to teams (event_settings.play_as = 'teams'). Players make
+-- their own, or the question master shuffles everyone into random ones.
+CREATE TABLE IF NOT EXISTS event_teams (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id   INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  name       TEXT NOT NULL COLLATE NOCASE,
+  colour     TEXT NOT NULL,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (event_id, name)
+);
+
+-- One team per player per quiz. A team's score is its players' scores added
+-- up, so score_events still records exactly who answered.
+CREATE TABLE IF NOT EXISTS event_team_members (
+  event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  team_id  INTEGER NOT NULL REFERENCES event_teams(id) ON DELETE CASCADE,
+  user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  PRIMARY KEY (event_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_event_team_members_team ON event_team_members(team_id);
 `;

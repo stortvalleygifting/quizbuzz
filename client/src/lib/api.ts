@@ -80,8 +80,23 @@ export interface Points {
 
 /** How one quiz is played. Points are for the 1st answer, the 2nd, then 3rd and later. */
 export interface GameRules {
+  playAs: 'individuals' | 'teams';
   secondBuzz: SecondBuzz;
   points: [Points, Points, Points];
+}
+
+/** Which team someone is on, as the buzzer and queue show it. */
+export interface TeamTag {
+  id: number;
+  name: string;
+  colour: string;
+}
+
+/** One team's line on the board, with its players. */
+export interface TeamEntry extends TeamTag {
+  place: number;
+  score: number;
+  members: { userId: number; username: string; score: number }[];
 }
 
 export interface BoardEntry {
@@ -110,12 +125,15 @@ export interface EventState {
     isQuestionMaster: boolean;
     isParticipant: boolean;
     hasBuzzed: boolean;
+    teamId: number | null;
   };
   question: { id: number; seq: number } | null;
   /** position: 1 for the first answer on this question, 2 for the second… */
-  answering: { userId: number; username: string; position: number } | null;
+  answering: { userId: number; username: string; position: number; team: TeamTag | null } | null;
   rules: GameRules;
-  queue: { userId: number; username: string; seq: number; outcome: BuzzOutcome }[];
+  queue: { userId: number; username: string; seq: number; outcome: BuzzOutcome; team: TeamTag | null }[];
+  /** A team quiz's standings, best first; empty when playing as individuals. */
+  teams: TeamEntry[];
   leaderboard: BoardEntry[];
   participants: { id: number; username: string; score: number }[];
 }
@@ -229,4 +247,13 @@ export const api = {
   adjustScore: (eventId: number, userId: number, delta: number) =>
     post<{ state: EventState }>(`/events/${eventId}/adjust`, { userId, delta }),
   setRules: (eventId: number, rules: GameRules) => post<{ state: EventState }>(`/events/${eventId}/rules`, rules),
+  createTeam: (eventId: number, name: string) => post<{ state: EventState }>(`/events/${eventId}/teams`, { name }),
+  joinTeam: (eventId: number, teamId: number) => post<{ state: EventState }>(`/events/${eventId}/teams/${teamId}/join`),
+  leaveTeam: (eventId: number) => del<{ state: EventState }>(`/events/${eventId}/team`),
+  renameTeam: (eventId: number, teamId: number, name: string) =>
+    post<{ state: EventState }>(`/events/${eventId}/teams/${teamId}/name`, { name }),
+  moveToTeam: (eventId: number, userId: number, teamId: number | null) =>
+    post<{ state: EventState }>(`/events/${eventId}/teams/move`, { userId, teamId }),
+  randomTeams: (eventId: number, count: number) =>
+    post<{ state: EventState }>(`/events/${eventId}/teams/random`, { count }),
 };
