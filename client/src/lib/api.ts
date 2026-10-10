@@ -70,6 +70,20 @@ export interface EventSummary {
   joined: boolean;
 }
 
+/** What happens after a wrong answer or a pass. */
+export type SecondBuzz = 'queue' | 'reopen' | 'one_shot';
+
+export interface Points {
+  right: number;
+  wrong: number;
+}
+
+/** How one quiz is played. Points are for the 1st answer, the 2nd, then 3rd and later. */
+export interface GameRules {
+  secondBuzz: SecondBuzz;
+  points: [Points, Points, Points];
+}
+
 export interface BoardEntry {
   place: number;
   userId: number;
@@ -98,7 +112,9 @@ export interface EventState {
     hasBuzzed: boolean;
   };
   question: { id: number; seq: number } | null;
-  answering: { userId: number; username: string } | null;
+  /** position: 1 for the first answer on this question, 2 for the second… */
+  answering: { userId: number; username: string; position: number } | null;
+  rules: GameRules;
   queue: { userId: number; username: string; seq: number; outcome: BuzzOutcome }[];
   leaderboard: BoardEntry[];
   participants: { id: number; username: string; score: number }[];
@@ -212,4 +228,5 @@ export const api = {
     request<{ headToHead: QuizHeadToHead }>(`/events/${eventId}/head-to-head/${userId}`),
   adjustScore: (eventId: number, userId: number, delta: number) =>
     post<{ state: EventState }>(`/events/${eventId}/adjust`, { userId, delta }),
+  setRules: (eventId: number, rules: GameRules) => post<{ state: EventState }>(`/events/${eventId}/rules`, rules),
 };

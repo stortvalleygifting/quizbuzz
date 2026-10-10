@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type ReactNode, type Ref } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api, type BoardEntry, type EventState } from '../lib/api';
+import { api, type BoardEntry, type EventState, type GameRules } from '../lib/api';
 import { useConfirm } from '../lib/confirm';
 import { useEventState } from '../lib/useEventState';
 import { JUDGED, YOUR_TURN, vibrate } from '../lib/haptics';
 import { AdjustScore, QuizRivalry, useHold } from './ScorePopups';
+import { RulesEditor, rulesSummary, signed } from './GameRules';
 
 const ordinal = (n: number): string => {
   const suffix = n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th';
@@ -123,22 +124,29 @@ function BoardRow({
   );
 }
 
-/** The bottom half of the question master's button: +1, 0 and -1. */
-function JudgeControls({ onJudge }: { onJudge: (delta: 1 | 0 | -1) => void }) {
+/**
+ * The bottom half of the question master's button: right, pass and wrong, each
+ * showing what it is worth for whoever is answering (+1 / 0 / −1 on Classic).
+ */
+function JudgeControls({ onJudge, right, wrong }: { onJudge: (delta: 1 | 0 | -1) => void; right: number; wrong: number }) {
   return (
     <div className="judge">
-      <button className="judge-btn plus" onClick={() => onJudge(1)} aria-label="Correct, plus one">
-        +1
+      <button className="judge-btn plus" onClick={() => onJudge(1)} aria-label={`Right, ${signed(right)}`}>
+        {signed(right)}
+        <span className="judge-word">right</span>
       </button>
-      <button className="judge-btn zero" onClick={() => onJudge(0)} aria-label="No score, pass on">
-        0
+      <button className="judge-btn zero" onClick={() => onJudge(0)} aria-label="Pass, no score">
+        0<span className="judge-word">pass</span>
       </button>
-      <button className="judge-btn minus" onClick={() => onJudge(-1)} aria-label="Wrong, minus one">
-        −1
+      <button className="judge-btn minus" onClick={() => onJudge(-1)} aria-label={`Wrong, ${signed(wrong)}`}>
+        {signed(wrong)}
+        <span className="judge-word">wrong</span>
       </button>
     </div>
   );
 }
+
+const ANSWER_POSITION = ['1st answer', '2nd answer'];
 
 export default function Event() {
   const { eventId } = useParams();
@@ -149,6 +157,7 @@ export default function Event() {
   // A name tapped (a player looking at a rival) or held (the question master
   // fixing a score) on the leaderboard.
   const [picked, setPicked] = useState<{ entry: BoardEntry; kind: 'rivalry' | 'adjust' } | null>(null);
+  const [editingRules, setEditingRules] = useState(false);
 
   // The moment the floor passes to you, in a room too loud to hear anything.
   const wasMine = useRef(false);
@@ -194,6 +203,19 @@ export default function Event() {
         }}
       />
     ) : null;
+  const canSetRules = (me.isAdmin || me.isQuestionMaster) && event.status !== 'finished';
+  const rulesPopup = () =>
+    editingRules && (
+      <RulesEditor
+        rules={state.rules}
+        live={event.status === 'live'}
+        onClose={() => setEditingRules(false)}
+        onSave={(rules: GameRules) => {
+          setEditingRules(false);
+          run(() => api.setRules(id, rules));
+        }}
+      />
+    );
   const waiting = queue.filter((b) => b.outcome === 'waiting');
   // Your place among the people still to be heard, so 1st means you are next
   // up — the same order the "Next up" line lists. 0 if you are not waiting:
@@ -228,7 +250,16 @@ export default function Event() {
               ? `Question master: ${event.questionMasterName}`
               : 'No question master yet.'}
           </div>
+          <div className="rules-line">
+            <span className="sub">Rules: {rulesSummary(state.rules)}</span>
+            {canSetRules && (
+              <button className="small" onClick={() => setEditingRules(true)}>
+                Change
+              </button>
+            )}
+          </div>
         </div>
+        {rulesPopup()}
 
         {finished && (
           <>
@@ -316,6 +347,11 @@ export default function Event() {
     )
       run(() => api.finishEvent(id));
   };
+  // What a right or wrong answer is worth for whoever has the floor.
+  const pointsNow = state.rules.points[Math.min(answering?.position ?? 1, 3) - 1];
+  // With the queue, a buzz behind whoever is answering takes a place in line;
+  // under the other rules the buzzer waits until they have been judged.
+  const queueing = state.rules.secondBuzz === 'queue';
   const onJudge = (delta: 1 | 0 | -1) => {
     vibrate(JUDGED);
     judge(delta);
@@ -346,6 +382,9 @@ export default function Event() {
                   ? 'Score the answer below.'
                   : 'Nobody has buzzed.'}
             </span>
+            <button className="small" onClick={() => setEditingRules(true)}>
+              Rules
+            </button>
             <button className="small" onClick={() => run(() => api.nextQuestion(id))}>
               Skip
             </button>
@@ -376,8 +415,17 @@ export default function Event() {
         {me.isQuestionMaster ? (
           answering ? (
             <div className="qm-panel">
-              <div className="qm-name">{answering.username}</div>
-              <JudgeControls onJudge={onJudge} />
+              <div className="qm-name">
+                {answering.username}
+                <span className="qm-position">
+                  {ANSWER_POSITION[answering.position - 1] ?? `${ordinal(answering.position)} answer`}
+                </span>
+              </div>
+              <JudgeControls
+                onJudge={onJudge}
+                right={pointsNow.right}
+                wrong={pointsNow.wrong}
+              />
             </div>
           ) : (
             <div className="buzz-idle">
@@ -390,11 +438,11 @@ export default function Event() {
             <span className="buzz-sub">You are watching. Tap to play.</span>
           </button>
         ) : answering ? (
-          // The button shows whoever got in first, but it still takes your buzz
-          // so you can take your place in the queue behind them.
+          // The button shows whoever got in first, but with the queue it still
+          // takes your buzz so you can take your place behind them.
           <button
             className={`buzzed${mine ? ' mine' : inQueue ? ' queued' : ''}`}
-            disabled={me.hasBuzzed}
+            disabled={me.hasBuzzed || !queueing}
             onClick={buzz}
           >
             <div className="buzz-name">{answering.username}</div>
@@ -405,8 +453,18 @@ export default function Event() {
                   ? `is answering · you are ${ordinal(myPlaceInQueue)} in the queue`
                   : me.hasBuzzed
                     ? 'is answering'
-                    : 'is answering · tap to join the queue'}
+                    : !queueing
+                      ? state.rules.secondBuzz === 'reopen'
+                        ? 'is answering · the buzzer re-opens if they miss'
+                        : 'is answering'
+                      : 'is answering · tap to join the queue'}
             </div>
+          </button>
+        ) : me.hasBuzzed ? (
+          // Re-open: you have had your go at this one, and the rest still can.
+          <button className="buzz" disabled>
+            <span className="buzz-word">WAIT</span>
+            <span className="buzz-sub">You've had your go at this question</span>
           </button>
         ) : (
           <button className={`buzz${buzzPending ? ' pending' : ''}`} onClick={buzz}>
@@ -416,6 +474,7 @@ export default function Event() {
         )}
       </div>
       {picked?.kind === 'adjust' && popup()}
+      {rulesPopup()}
     </div>
   );
 }

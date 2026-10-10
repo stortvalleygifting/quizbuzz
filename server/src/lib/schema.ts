@@ -110,4 +110,32 @@ CREATE TABLE IF NOT EXISTS score_events (
   created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_score_events_event ON score_events(event_id, created_at);
+
+-- -------------------------------------------------------------- game rules --
+-- How one quiz is played. A quiz with no row here plays Classic: individuals,
+-- the buzz queue, and +1 / -1 for every answer, which is how every quiz before
+-- game rules was played. These are tables of their own rather than columns on
+-- events because this schema is only ever created if missing: a new column
+-- would never reach the live database, but a new table does.
+CREATE TABLE IF NOT EXISTS event_settings (
+  event_id    INTEGER PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+  -- Teams arrive in a later update; the column is here now so they need no
+  -- change to this table.
+  play_as     TEXT NOT NULL DEFAULT 'individuals' CHECK (play_as IN ('individuals','teams')),
+  -- What happens after a wrong answer or a pass: 'queue' hands the floor to
+  -- the next person who buzzed, 'reopen' frees the buzzer for everyone who has
+  -- not answered yet, 'one_shot' ends the question.
+  second_buzz TEXT NOT NULL DEFAULT 'queue' CHECK (second_buzz IN ('queue','reopen','one_shot')),
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Points by answer position on a question: 1 is the first person to answer,
+-- 2 the second, and 3 covers everyone after that.
+CREATE TABLE IF NOT EXISTS event_points (
+  event_id     INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  position     INTEGER NOT NULL CHECK (position BETWEEN 1 AND 3),
+  right_points INTEGER NOT NULL,
+  wrong_points INTEGER NOT NULL,
+  PRIMARY KEY (event_id, position)
+);
 `;

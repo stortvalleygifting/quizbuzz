@@ -1,6 +1,7 @@
 import { transaction, type DB } from './db.js';
 import { badRequest, conflict, forbidden, notFound } from './errors.js';
 import { effectiveMembership, getMembership } from './groups.js';
+import { getRules, pointsFor, type GameRules } from './rules.js';
 
 export interface EventRow {
   id: number;
@@ -126,9 +127,22 @@ export function getAnswering(db: DB, questionId: number): (BuzzRow & { username:
 }
 
 /**
- * Records a buzz. The first buzz on a question takes the floor; later ones
- * queue up behind it in the order they arrived. The whole read-then-insert
- * runs in one transaction, so the sequence number settles the race honestly.
+ * How many people have already been judged on this question, plus one: the
+ * position of whoever answers next, which decides their points.
+ */
+export function answerPosition(db: DB, questionId: number): number {
+  const { n } = db
+    .prepare(`SELECT COUNT(*) AS n FROM buzzes WHERE question_id = ? AND outcome IN ('correct','pass','wrong')`)
+    .get(questionId) as { n: number };
+  return n + 1;
+}
+
+/**
+ * Records a buzz. A buzz while nobody has the floor takes it; with the queue
+ * rule, later ones line up behind it in the order they arrived. Under the
+ * re-open and one-shot rules there is no queue, so a buzz while someone is
+ * answering is turned away. The whole read-then-insert runs in one
+ * transaction, so the sequence number settles the race honestly.
  */
 export function recordBuzz(db: DB, eventId: number, userId: number): { accepted: boolean } {
   return transaction(db, () => {
@@ -145,6 +159,9 @@ export function recordBuzz(db: DB, eventId: number, userId: number): { accepted:
       .get(question.id, userId);
     if (already) return { accepted: false };
 
+    const floorTaken = Boolean(getAnswering(db, question.id));
+    if (floorTaken && getRules(db, eventId).secondBuzz !== 'queue') return { accepted: false };
+
     const { next } = db
       .prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM buzzes WHERE question_id = ?')
       .get(question.id) as { next: number };
@@ -153,7 +170,7 @@ export function recordBuzz(db: DB, eventId: number, userId: number): { accepted:
       question.id,
       userId,
       next,
-      next === 1 ? 'answering' : 'waiting',
+      floorTaken ? 'waiting' : 'answering',
     );
     return { accepted: true };
   });
@@ -161,14 +178,21 @@ export function recordBuzz(db: DB, eventId: number, userId: number): { accepted:
 
 // ---------------------------------------------------------------- scoring --
 
+/** The question master's verdict: 1 right, 0 pass, -1 wrong. */
 export type Judgement = 1 | 0 | -1;
 
 /**
- * The question master's +1 / 0 / -1.
+ * The question master's right / pass / wrong.
  *
- * +1 ends the question: the queue is cleared and everyone resets for the next
- * one. 0 and -1 hand the floor to the next person who buzzed, until the queue
- * runs out — then the question ends the same way.
+ * The points come from the quiz's rules, by how many people have already
+ * answered this question: Classic is +1 and -1 for everyone. A pass scores
+ * nothing.
+ *
+ * A right answer ends the question: the queue is cleared and everyone resets
+ * for the next one. After a pass or a wrong answer the second-buzz rule
+ * decides: the queue hands the floor to the next person who buzzed until it
+ * runs out, re-open frees the buzzer for everyone who has not answered yet,
+ * and one shot ends the question there and then.
  */
 export function judgeAnswer(
   db: DB,
@@ -187,23 +211,45 @@ export function judgeAnswer(
     const current = getAnswering(db, question.id);
     if (!current) throw badRequest('Nobody has buzzed in yet.', 'nobody_answering');
 
+    const rules = getRules(db, eventId);
+    const points = pointsFor(rules, answerPosition(db, question.id));
+    const scored = delta === 1 ? points.right : delta === -1 ? points.wrong : 0;
+
     const outcome: BuzzOutcome = delta === 1 ? 'correct' : delta === 0 ? 'pass' : 'wrong';
     db.prepare('UPDATE buzzes SET outcome = ? WHERE id = ?').run(outcome, current.id);
 
-    if (delta !== 0) {
+    if (scored !== 0) {
       db.prepare(
         `INSERT INTO score_events (event_id, user_id, question_id, delta, awarded_by) VALUES (?, ?, ?, ?, ?)`,
-      ).run(eventId, current.user_id, question.id, delta, masterId);
+      ).run(eventId, current.user_id, question.id, scored, masterId);
       db.prepare('UPDATE event_participants SET score = score + ? WHERE event_id = ? AND user_id = ?').run(
-        delta,
+        scored,
         eventId,
         current.user_id,
       );
     }
 
-    // A right answer ends the question; so does running out of people to ask.
+    if (delta !== 1 && rules.secondBuzz === 'reopen') {
+      // Anyone queued from before the rule changed goes back to buzzing like
+      // everyone else, and the question stays open until someone gets it or
+      // everybody playing has had a go.
+      db.prepare(`UPDATE buzzes SET outcome = 'skipped' WHERE question_id = ? AND outcome = 'waiting'`).run(question.id);
+      const { players } = db
+        .prepare(
+          `SELECT COUNT(*) AS players FROM event_participants
+            WHERE event_id = ? AND user_id IS NOT ?`,
+        )
+        .get(eventId, event.question_master_id) as { players: number };
+      const { tried } = db.prepare('SELECT COUNT(*) AS tried FROM buzzes WHERE question_id = ?').get(question.id) as {
+        tried: number;
+      };
+      if (tried < players) return { scored: current.user_id, nextQuestion: false };
+    }
+
+    // A right answer ends the question; so does running out of people to ask,
+    // and so does any miss under one shot.
     const next =
-      delta === 1
+      delta === 1 || rules.secondBuzz !== 'queue'
         ? undefined
         : (db
             .prepare(
@@ -284,8 +330,12 @@ export interface EventState {
     hasBuzzed: boolean;
   };
   question: { id: number; seq: number } | null;
-  /** Whoever the BUZZ! button should be showing right now, if anyone. */
-  answering: { userId: number; username: string } | null;
+  /**
+   * Whoever the BUZZ! button should be showing right now, if anyone, and
+   * which answer on this question theirs is (1st, 2nd…), which sets the points.
+   */
+  answering: { userId: number; username: string; position: number } | null;
+  rules: GameRules;
   queue: { userId: number; username: string; seq: number; outcome: BuzzOutcome }[];
   leaderboard: BoardEntry[];
   participants: { id: number; username: string; score: number }[];
@@ -335,7 +385,11 @@ export function buildState(db: DB, eventId: number, viewerId: number): EventStat
       hasBuzzed: queue.some((b) => b.user_id === viewerId),
     },
     question: question && question.state === 'open' ? { id: question.id, seq: question.seq } : null,
-    answering: answering ? { userId: answering.user_id, username: answering.username } : null,
+    answering:
+      answering && question
+        ? { userId: answering.user_id, username: answering.username, position: answerPosition(db, question.id) }
+        : null,
+    rules: getRules(db, eventId),
     queue: queue.map((b) => ({ userId: b.user_id, username: b.username, seq: b.seq, outcome: b.outcome })),
     leaderboard: getLeaderboard(db, eventId),
     participants,

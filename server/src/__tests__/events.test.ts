@@ -623,3 +623,121 @@ describe('adjusting a score by hand', () => {
     expect((await adjust(eventId, owner.token, players[0].id, 1)).status).toBe(200);
   });
 });
+
+describe('game rules', () => {
+  const setRules = (eventId: number, token: string, rules: unknown) =>
+    request(app).post(`/api/events/${eventId}/rules`).set(auth(token)).send(rules);
+  const scoreOf = (s: { leaderboard: { username: string; score: number }[] }, name: string) =>
+    s.leaderboard.find((e) => e.username === name)!.score;
+  const flat = (right: number, wrong: number) => [
+    { right, wrong },
+    { right, wrong },
+    { right, wrong },
+  ];
+
+  it('starts every quiz on Classic: the queue, +1 and -1', async () => {
+    const { eventId, players } = await liveEvent(['ann']);
+    const s = await state(eventId, players[0].token);
+    expect(s.rules).toEqual({ secondBuzz: 'queue', points: flat(1, -1) });
+  });
+
+  it('scores by answer position: 1st, 2nd, then 3rd and later', async () => {
+    const { eventId, owner, players } = await liveEvent(['ann', 'bob', 'cat', 'dan']);
+    const [ann, bob, cat, dan] = players;
+    const saved = await setRules(eventId, owner.token, {
+      secondBuzz: 'queue',
+      points: [
+        { right: 3, wrong: -2 },
+        { right: 2, wrong: -1 },
+        { right: 1, wrong: 0 },
+      ],
+    });
+    expect(saved.status).toBe(200);
+
+    for (const p of [ann, bob, cat, dan]) await buzz(eventId, p.token);
+    expect((await state(eventId, owner.token)).answering.position).toBe(1);
+    await judge(eventId, owner.token, -1); // ann, 1st: -2
+    await judge(eventId, owner.token, 0); // bob, 2nd: a pass scores nothing
+    expect((await state(eventId, owner.token)).answering.position).toBe(3);
+    await judge(eventId, owner.token, -1); // cat, 3rd: 0
+    await judge(eventId, owner.token, 1); // dan, 4th: +1
+
+    const s = await state(eventId, ann.token);
+    expect([scoreOf(s, 'ann'), scoreOf(s, 'bob'), scoreOf(s, 'cat'), scoreOf(s, 'dan')]).toEqual([-2, 0, 0, 1]);
+
+    // Only real score changes are logged, so the history still adds up.
+    const logged = getDb().prepare('SELECT delta FROM score_events WHERE event_id = ? ORDER BY id').all(eventId);
+    expect(logged.map((r) => r.delta)).toEqual([-2, 1]);
+  });
+
+  it('lets the points change mid-quiz without touching answers already scored', async () => {
+    const { eventId, owner, players } = await liveEvent(['ann']);
+    await buzz(eventId, players[0].token);
+    await judge(eventId, owner.token, 1);
+
+    await setRules(eventId, owner.token, { secondBuzz: 'queue', points: flat(2, 0) });
+    await buzz(eventId, players[0].token);
+    await judge(eventId, owner.token, 1);
+
+    expect(scoreOf(await state(eventId, owner.token), 'ann')).toBe(3);
+  });
+
+  it('re-open: no queue, and a miss frees the buzzer for everyone who has not answered', async () => {
+    const { eventId, owner, players } = await liveEvent(['ann', 'bob', 'cat']);
+    const [ann, bob, cat] = players;
+    await setRules(eventId, owner.token, { secondBuzz: 'reopen', points: flat(1, -1) });
+
+    await buzz(eventId, ann.token);
+    await buzz(eventId, bob.token); // turned away: ann has the floor
+    let s = await state(eventId, bob.token);
+    expect(s.queue.map((b: { username: string }) => b.username)).toEqual(['ann']);
+    expect(s.me.hasBuzzed).toBe(false);
+
+    await judge(eventId, owner.token, -1);
+    s = await state(eventId, ann.token);
+    expect(s.answering).toBeNull();
+    expect(s.question.seq).toBe(1); // still the same question
+
+    await buzz(eventId, ann.token); // already had a go
+    await buzz(eventId, cat.token);
+    s = await state(eventId, ann.token);
+    expect(s.answering.username).toBe('cat');
+    expect(s.answering.position).toBe(2);
+
+    await judge(eventId, owner.token, 0);
+    await buzz(eventId, bob.token);
+    await judge(eventId, owner.token, -1);
+
+    // Everyone playing has had a go, so the next question opens.
+    s = await state(eventId, ann.token);
+    expect(s.question.seq).toBe(2);
+    expect(s.queue).toHaveLength(0);
+  });
+
+  it('one shot: a miss ends the question', async () => {
+    const { eventId, owner, players } = await liveEvent(['ann', 'bob']);
+    await setRules(eventId, owner.token, { secondBuzz: 'one_shot', points: flat(1, -1) });
+
+    await buzz(eventId, players[0].token);
+    await buzz(eventId, players[1].token);
+    await judge(eventId, owner.token, -1);
+
+    const s = await state(eventId, players[1].token);
+    expect(s.question.seq).toBe(2);
+    expect(scoreOf(s, 'ann')).toBe(-1);
+    expect(scoreOf(s, 'bob')).toBe(0);
+  });
+
+  it('only lets an admin or the question master set the rules, and checks them', async () => {
+    const { eventId, owner, players } = await liveEvent(['ann']);
+    const ok = { secondBuzz: 'queue', points: flat(1, 0) };
+
+    expect((await setRules(eventId, players[0].token, ok)).status).toBe(403);
+    expect((await setRules(eventId, owner.token, { ...ok, secondBuzz: 'whenever' })).status).toBe(400);
+    expect((await setRules(eventId, owner.token, { ...ok, points: flat(500, 0) })).status).toBe(400);
+    expect((await setRules(eventId, owner.token, { ...ok, points: [{ right: 1, wrong: 0 }] })).status).toBe(400);
+
+    await request(app).post(`/api/events/${eventId}/finish`).set(auth(owner.token));
+    expect((await setRules(eventId, owner.token, ok)).status).toBe(400);
+  });
+});
