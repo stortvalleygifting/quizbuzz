@@ -25,7 +25,8 @@ import {
   type Judgement,
 } from '../lib/events.js';
 import { broadcastEvent } from '../lib/realtime.js';
-import { setRules } from '../lib/rules.js';
+import { getRules, setRules } from '../lib/rules.js';
+import { createTeam, isTeamQuiz, joinTeam, leaveTeam, movePlayer, randomTeams, renameTeam } from '../lib/teams.js';
 
 export const eventsRouter = Router();
 eventsRouter.use(requireAuth);
@@ -48,6 +49,16 @@ const serializeEvent = (e: EventRow, extra: { participantCount: number; joined: 
   participantCount: extra.participantCount,
   joined: extra.joined,
 });
+
+/** Takes someone off their team in this quiz, tidying the team away if it is now empty. */
+function dropFromTeam(eventId: number, userId: number): void {
+  const db = getDb();
+  db.prepare('DELETE FROM event_team_members WHERE event_id = ? AND user_id = ?').run(eventId, userId);
+  db.prepare(
+    `DELETE FROM event_teams WHERE event_id = ?
+       AND id NOT IN (SELECT team_id FROM event_team_members WHERE event_id = ?)`,
+  ).run(eventId, eventId);
+}
 
 function summarize(eventId: number, viewerId: number) {
   const db = getDb();
@@ -167,7 +178,10 @@ eventsRouter.delete(
       throw badRequest('You are the question master. Hand that over before you leave.', 'is_question_master');
     }
 
-    db.prepare('DELETE FROM event_participants WHERE event_id = ? AND user_id = ?').run(eventId, me);
+    transaction(db, () => {
+      db.prepare('DELETE FROM event_participants WHERE event_id = ? AND user_id = ?').run(eventId, me);
+      dropFromTeam(eventId, me);
+    });
     await broadcastEvent(eventId);
     res.json({ left: true });
   }),
@@ -185,7 +199,11 @@ eventsRouter.post(
     requireEventAdmin(db, event, req.user!.uid);
     assertCanBeQuestionMaster(db, event, userId);
 
-    db.prepare('UPDATE events SET question_master_id = ? WHERE id = ?').run(userId, eventId);
+    transaction(db, () => {
+      db.prepare('UPDATE events SET question_master_id = ? WHERE id = ?').run(userId, eventId);
+      // The question master runs the quiz rather than playing in a team.
+      dropFromTeam(eventId, userId);
+    });
     await broadcastEvent(eventId);
     res.json({ state: buildState(db, eventId, req.user!.uid) });
   }),
@@ -342,9 +360,7 @@ eventsRouter.get(
     if (event.status !== 'finished') {
       throw badRequest('Head-to-head opens once the quiz has finished.', 'not_finished');
     }
-    if (event.status !== 'finished') {
-      throw badRequest('Head-to-head opens once the quiz has finished.', 'not_finished');
-    }
+    if (isTeamQuiz(db, eventId)) throw badRequest('Team quizzes do not count for head-to-head.', 'team_quiz');
     res.json({ headToHead: getQuizHeadToHead(db, eventId, me, themId) });
   }),
 );
@@ -383,6 +399,8 @@ const pointsSchema = z.object({
   wrong: z.number().int().min(-100, 'Points go from -100 to 100.').max(100, 'Points go from -100 to 100.'),
 });
 const rulesSchema = z.object({
+  // Left out by older screens; the quiz then keeps whatever it had.
+  playAs: z.enum(['individuals', 'teams']).optional(),
   secondBuzz: z.enum(['queue', 'reopen', 'one_shot']),
   points: z.tuple([pointsSchema, pointsSchema, pointsSchema]),
 });
@@ -390,14 +408,110 @@ eventsRouter.post(
   '/events/:eventId/rules',
   asyncHandler(async (req, res) => {
     const eventId = parseId(req.params.eventId, 'event');
-    const rules = parseBody(rulesSchema, req.body);
+    const body = parseBody(rulesSchema, req.body);
     const me = req.user!.uid;
     const db = getDb();
     const event = getEvent(db, eventId);
     if (event.question_master_id !== me) requireEventAdmin(db, event, me);
     if (event.status === 'finished') throw badRequest('That quiz has finished.', 'finished');
 
-    setRules(db, eventId, rules);
+    const playAs = body.playAs ?? getRules(db, eventId).playAs;
+    if (playAs !== getRules(db, eventId).playAs && event.status !== 'scheduled') {
+      throw conflict('Switch between teams and individuals before the quiz starts.', 'started');
+    }
+    setRules(db, eventId, { ...body, playAs });
+    await broadcastEvent(eventId);
+    res.json({ state: buildState(db, eventId, me) });
+  }),
+);
+
+// ------------------------------------------------------------------ teams --
+
+const teamNameSchema = z.object({
+  name: z.string().trim().min(1, 'Give the team a name.').max(24, 'Team names can be 24 characters at most.'),
+});
+
+/** A player starts a team and names it. Only in a quiz switched to teams. */
+eventsRouter.post(
+  '/events/:eventId/teams',
+  asyncHandler(async (req, res) => {
+    const eventId = parseId(req.params.eventId, 'event');
+    const { name } = parseBody(teamNameSchema, req.body);
+    const me = req.user!.uid;
+    const db = getDb();
+    createTeam(db, eventId, me, name);
+    await broadcastEvent(eventId);
+    res.status(201).json({ state: buildState(db, eventId, me) });
+  }),
+);
+
+/** Join a team someone else has made. */
+eventsRouter.post(
+  '/events/:eventId/teams/:teamId/join',
+  asyncHandler(async (req, res) => {
+    const eventId = parseId(req.params.eventId, 'event');
+    const teamId = parseId(req.params.teamId, 'team');
+    const me = req.user!.uid;
+    const db = getDb();
+    joinTeam(db, eventId, me, teamId);
+    await broadcastEvent(eventId);
+    res.json({ state: buildState(db, eventId, me) });
+  }),
+);
+
+/** Step off your team, before the quiz starts. */
+eventsRouter.delete(
+  '/events/:eventId/team',
+  asyncHandler(async (req, res) => {
+    const eventId = parseId(req.params.eventId, 'event');
+    const me = req.user!.uid;
+    const db = getDb();
+    leaveTeam(db, eventId, me);
+    await broadcastEvent(eventId);
+    res.json({ state: buildState(db, eventId, me) });
+  }),
+);
+
+/** Rename a team: anyone on it, the question master or an admin. */
+eventsRouter.post(
+  '/events/:eventId/teams/:teamId/name',
+  asyncHandler(async (req, res) => {
+    const eventId = parseId(req.params.eventId, 'event');
+    const teamId = parseId(req.params.teamId, 'team');
+    const { name } = parseBody(teamNameSchema, req.body);
+    const me = req.user!.uid;
+    const db = getDb();
+    renameTeam(db, eventId, me, teamId, name);
+    await broadcastEvent(eventId);
+    res.json({ state: buildState(db, eventId, me) });
+  }),
+);
+
+/** Question master or admin: put a player on a team, or (teamId null) take them off. */
+const moveSchema = z.object({ userId: z.number().int().positive(), teamId: z.number().int().positive().nullable() });
+eventsRouter.post(
+  '/events/:eventId/teams/move',
+  asyncHandler(async (req, res) => {
+    const eventId = parseId(req.params.eventId, 'event');
+    const { userId, teamId } = parseBody(moveSchema, req.body);
+    const me = req.user!.uid;
+    const db = getDb();
+    movePlayer(db, eventId, me, userId, teamId);
+    await broadcastEvent(eventId);
+    res.json({ state: buildState(db, eventId, me) });
+  }),
+);
+
+/** Question master or admin: shuffle everyone into random teams. */
+const randomSchema = z.object({ count: z.number().int() });
+eventsRouter.post(
+  '/events/:eventId/teams/random',
+  asyncHandler(async (req, res) => {
+    const eventId = parseId(req.params.eventId, 'event');
+    const { count } = parseBody(randomSchema, req.body);
+    const me = req.user!.uid;
+    const db = getDb();
+    randomTeams(db, eventId, me, count);
     await broadcastEvent(eventId);
     res.json({ state: buildState(db, eventId, me) });
   }),

@@ -2,6 +2,7 @@ import { transaction, type DB } from './db.js';
 import { badRequest, conflict, forbidden, notFound } from './errors.js';
 import { effectiveMembership, getMembership } from './groups.js';
 import { getRules, pointsFor, type GameRules } from './rules.js';
+import { getTeamBoard, teamOf, type TeamEntry } from './teams.js';
 
 export interface EventRow {
   id: number;
@@ -159,8 +160,23 @@ export function recordBuzz(db: DB, eventId: number, userId: number): { accepted:
       .get(question.id, userId);
     if (already) return { accepted: false };
 
+    const rules = getRules(db, eventId);
+    if (rules.playAs === 'teams') {
+      // Only the first buzz from each team counts: a teammate's tap after it
+      // is not recorded at all, so the queue runs team by team.
+      const team = teamOf(db, eventId, userId);
+      if (!team) throw badRequest('Join a team before you buzz in.', 'no_team');
+      const teammateIn = db
+        .prepare(
+          `SELECT 1 FROM buzzes b JOIN event_team_members m ON m.event_id = ? AND m.user_id = b.user_id
+            WHERE b.question_id = ? AND m.team_id = ?`,
+        )
+        .get(eventId, question.id, team.id);
+      if (teammateIn) return { accepted: false };
+    }
+
     const floorTaken = Boolean(getAnswering(db, question.id));
-    if (floorTaken && getRules(db, eventId).secondBuzz !== 'queue') return { accepted: false };
+    if (floorTaken && rules.secondBuzz !== 'queue') return { accepted: false };
 
     const { next } = db
       .prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM buzzes WHERE question_id = ?')
@@ -232,14 +248,15 @@ export function judgeAnswer(
     if (delta !== 1 && rules.secondBuzz === 'reopen') {
       // Anyone queued from before the rule changed goes back to buzzing like
       // everyone else, and the question stays open until someone gets it or
-      // everybody playing has had a go.
+      // everybody playing (every team, in a team quiz) has had a go.
       db.prepare(`UPDATE buzzes SET outcome = 'skipped' WHERE question_id = ? AND outcome = 'waiting'`).run(question.id);
-      const { players } = db
-        .prepare(
-          `SELECT COUNT(*) AS players FROM event_participants
-            WHERE event_id = ? AND user_id IS NOT ?`,
-        )
-        .get(eventId, event.question_master_id) as { players: number };
+      const { players } = (
+        rules.playAs === 'teams'
+          ? db.prepare('SELECT COUNT(*) AS players FROM event_teams WHERE event_id = ?').get(eventId)
+          : db
+              .prepare('SELECT COUNT(*) AS players FROM event_participants WHERE event_id = ? AND user_id IS NOT ?')
+              .get(eventId, event.question_master_id)
+      ) as { players: number };
       const { tried } = db.prepare('SELECT COUNT(*) AS tried FROM buzzes WHERE question_id = ?').get(question.id) as {
         tried: number;
       };
@@ -328,17 +345,28 @@ export interface EventState {
     isQuestionMaster: boolean;
     isParticipant: boolean;
     hasBuzzed: boolean;
+    /** Your team in a team quiz; null if you have not picked one (or it isn't one). */
+    teamId: number | null;
   };
   question: { id: number; seq: number } | null;
   /**
    * Whoever the BUZZ! button should be showing right now, if anyone, and
    * which answer on this question theirs is (1st, 2nd…), which sets the points.
    */
-  answering: { userId: number; username: string; position: number } | null;
+  answering: { userId: number; username: string; position: number; team: TeamTag | null } | null;
   rules: GameRules;
-  queue: { userId: number; username: string; seq: number; outcome: BuzzOutcome }[];
+  queue: { userId: number; username: string; seq: number; outcome: BuzzOutcome; team: TeamTag | null }[];
+  /** A team quiz's standings, best first; empty when playing as individuals. */
+  teams: TeamEntry[];
   leaderboard: BoardEntry[];
   participants: { id: number; username: string; score: number }[];
+}
+
+/** Which team someone is on, as the buzzer and queue show it. */
+export interface TeamTag {
+  id: number;
+  name: string;
+  colour: string;
 }
 
 /** The single payload every screen renders from, over REST and over sockets alike. */
@@ -357,6 +385,12 @@ export function buildState(db: DB, eventId: number, viewerId: number): EventStat
   const question = getOpenQuestion(db, event);
   const queue = question && question.state === 'open' ? getQueue(db, question.id) : [];
   const answering = queue.find((b) => b.outcome === 'answering');
+  const rules = getRules(db, eventId);
+  const teams = rules.playAs === 'teams' ? getTeamBoard(db, event) : [];
+  const teamFor = (userId: number): TeamTag | null => {
+    const t = teams.find((team) => team.members.some((m) => m.userId === userId));
+    return t ? { id: t.id, name: t.name, colour: t.colour } : null;
+  };
 
   const participants = db
     .prepare(
@@ -383,14 +417,27 @@ export function buildState(db: DB, eventId: number, viewerId: number): EventStat
       isQuestionMaster: event.question_master_id === viewerId,
       isParticipant: participants.some((p) => p.id === viewerId),
       hasBuzzed: queue.some((b) => b.user_id === viewerId),
+      teamId: teamFor(viewerId)?.id ?? null,
     },
     question: question && question.state === 'open' ? { id: question.id, seq: question.seq } : null,
     answering:
       answering && question
-        ? { userId: answering.user_id, username: answering.username, position: answerPosition(db, question.id) }
+        ? {
+            userId: answering.user_id,
+            username: answering.username,
+            position: answerPosition(db, question.id),
+            team: teamFor(answering.user_id),
+          }
         : null,
-    rules: getRules(db, eventId),
-    queue: queue.map((b) => ({ userId: b.user_id, username: b.username, seq: b.seq, outcome: b.outcome })),
+    rules,
+    queue: queue.map((b) => ({
+      userId: b.user_id,
+      username: b.username,
+      seq: b.seq,
+      outcome: b.outcome,
+      team: teamFor(b.user_id),
+    })),
+    teams,
     leaderboard: getLeaderboard(db, eventId),
     participants,
   };
@@ -423,10 +470,14 @@ export interface HeadToHead {
   }[];
 }
 
+/** Team quizzes are left out of head-to-head altogether. */
+const NOT_A_TEAM_QUIZ = `NOT EXISTS (SELECT 1 FROM event_settings s WHERE s.event_id = e.id AND s.play_as = 'teams')`;
+
 /**
  * How two members of a group have fared against each other.
  *
- * A quiz only counts once it has finished and both of you were playing it.
+ * A quiz only counts once it has finished and both of you were playing it,
+ * and only if it was played as individuals.
  * Whoever ran a quiz is left out of its result, since the question master has
  * no score of their own to compare.
  */
@@ -446,6 +497,7 @@ export function getHeadToHead(db: DB, groupId: number, meId: number, themId: num
           AND e.status = 'finished'
           AND e.question_master_id IS NOT @me
           AND e.question_master_id IS NOT @them
+          AND ${NOT_A_TEAM_QUIZ}
         ORDER BY e.ended_at DESC, e.id DESC`,
     )
     .all({ group: groupId, me: meId, them: themId }) as unknown as {
@@ -480,7 +532,8 @@ export function getHeadToHead(db: DB, groupId: number, meId: number, themId: num
        JOIN events e ON e.id = q.event_id
        JOIN buzzes mine   ON mine.question_id   = q.id AND mine.user_id   = @me
        JOIN buzzes theirs ON theirs.question_id = q.id AND theirs.user_id = @them
-      WHERE e.group_id = @group`,
+      WHERE e.group_id = @group
+        AND ${NOT_A_TEAM_QUIZ}`,
     )
     .get({ group: groupId, me: meId, them: themId }) as unknown as {
     you_first: number | null;

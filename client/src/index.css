@@ -490,3 +490,50 @@ a { color: var(--accent-bright); }
 .judge-word { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.8; }
 .qm-position { display: block; font-size: 14px; font-weight: 600; color: var(--muted); }
 .qm-name { flex-direction: column; }
+
+/* ----------------------------------------------------------------- teams -- */
+
+.team-dot { display: inline-block; flex: 0 0 auto; width: 12px; height: 12px; border-radius: 50%; }
+.team-card { border-left-width: 5px; }
+.team-card.mine { background: #2a2352; }
+.team-card .row .name { font-size: 17px; }
+.members { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.member { padding: 4px 10px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); font-size: 14px; }
+.member.pickable { cursor: pointer; border-style: dashed; }
+.team-actions { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.team-pick {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 6px 0;
+  font-size: 16px;
+}
+.team-pick:disabled { opacity: 0.6; }
+.modal-actions.spaced { margin-top: 14px; }
+.modal input { margin: 8px 0 4px; }
+
+.my-team { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); max-width: 40%; overflow: hidden; white-space: nowrap; }
+
+.team-block { display: flex; flex-direction: column; gap: 6px; flex: 0 0 auto; }
+.board-row.team-row { border-left-width: 5px; }
+.member-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: 22px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  font-size: 14px;
+}
+.member-row.me { color: var(--accent-bright); }
+.member-row .who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.member-row .score { font-weight: 700; font-variant-numeric: tabular-nums; }
+.member-row.pickable { cursor: pointer; }
+
+.qm-team { display: inline-flex; align-items: center; gap: 6px; font-size: 16px; font-weight: 700; color: var(--text); }
+.buzzed.team { border-width: 3px; }
