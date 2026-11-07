@@ -69,7 +69,7 @@ function Scoreboard({
             rowRef={isMe ? meRef : undefined}
             className={`board-row${isMe ? ' me' : ''}${answering ? ' answering' : ''}`}
             onTap={onTap && !isMe ? () => onTap(e) : undefined}
-            onHold={onHold ? () => onHold(e) : undefined}
+            onHold={onHold && !isMe ? () => onHold(e) : undefined}
           >
             <span className="place">{e.place}</span>
             <span className="who">{e.username}</span>
@@ -193,7 +193,12 @@ export default function Event() {
       event.status === 'finished' && me.isParticipant && !me.isQuestionMaster && !teamQuiz
         ? (entry: BoardEntry) => setPicked({ entry, kind: 'rivalry' })
         : undefined,
-    onHold: me.isQuestionMaster ? (entry: BoardEntry) => setPicked({ entry, kind: 'adjust' }) : undefined,
+    // The question master, or any group admin, holds a name to put a score
+    // right. Nobody can hold their own.
+    onHold:
+      (me.isQuestionMaster || me.isAdmin) && event.status !== 'scheduled'
+        ? (entry: BoardEntry) => setPicked({ entry, kind: 'adjust' })
+        : undefined,
   };
   const popup = () =>
     picked?.kind === 'rivalry' ? (

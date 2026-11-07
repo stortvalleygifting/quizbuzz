@@ -96,6 +96,7 @@ button.link { background: none; border: none; color: var(--accent-bright); paddi
 .row { display: flex; align-items: center; gap: 10px; }
 .row + .row { margin-top: 10px; }
 .row .grow { flex: 1; min-width: 0; }
+.row.member-actions { flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .row .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .sub { color: var(--muted); font-size: 13px; }

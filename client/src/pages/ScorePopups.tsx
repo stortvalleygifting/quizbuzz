@@ -40,7 +40,7 @@ export function useHold(onHold: () => void) {
   };
 }
 
-/** The question master's pop-up for putting one person's score right. */
+/** The question master's (or a group admin's) pop-up for putting one person's score right. */
 export function AdjustScore({
   entry,
   onSave,

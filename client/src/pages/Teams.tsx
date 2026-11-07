@@ -342,7 +342,7 @@ export function TeamBoard({
                 member={m}
                 isMe={m.userId === state.me.userId}
                 onHold={
-                  onHoldMember
+                  onHoldMember && m.userId !== state.me.userId
                     ? () => onHoldMember({ place: t.place, userId: m.userId, username: m.username, score: m.score })
                     : undefined
                 }

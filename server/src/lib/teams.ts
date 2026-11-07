@@ -1,6 +1,7 @@
 import { transaction, type DB } from './db.js';
 import { badRequest, conflict, forbidden, notFound } from './errors.js';
 import { getEvent, isParticipant, requireEventAdmin, type EventRow } from './events.js';
+import { displayNameSql } from './nicknames.js';
 import { getRules } from './rules.js';
 
 /** Team colours, handed out in this order; random teams are named after them. */
@@ -58,14 +59,14 @@ export function getTeamBoard(db: DB, event: EventRow): TeamEntry[] {
   const teams = db.prepare('SELECT * FROM event_teams WHERE event_id = ? ORDER BY id').all(event.id) as unknown as TeamRow[];
   const members = db
     .prepare(
-      `SELECT m.team_id, u.id AS user_id, u.username, p.score
+      `SELECT m.team_id, u.id AS user_id, ${displayNameSql('u', '?')} AS display_name, p.score
          FROM event_team_members m
          JOIN users u ON u.id = m.user_id
          JOIN event_participants p ON p.event_id = m.event_id AND p.user_id = m.user_id
         WHERE m.event_id = ?
-        ORDER BY p.score DESC, u.username COLLATE NOCASE`,
+        ORDER BY p.score DESC, display_name COLLATE NOCASE`,
     )
-    .all(event.id) as { team_id: number; user_id: number; username: string; score: number }[];
+    .all(event.group_id, event.id) as { team_id: number; user_id: number; display_name: string; score: number }[];
 
   const entries = teams.map((t) => {
     const mine = members.filter((m) => m.team_id === t.id);
@@ -75,7 +76,7 @@ export function getTeamBoard(db: DB, event: EventRow): TeamEntry[] {
       name: t.name,
       colour: t.colour,
       score: mine.reduce((sum, m) => sum + m.score, 0),
-      members: mine.map((m) => ({ userId: m.user_id, username: m.username, score: m.score })),
+      members: mine.map((m) => ({ userId: m.user_id, username: m.display_name, score: m.score })),
     };
   });
   entries.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));

@@ -1,6 +1,7 @@
 import { transaction, type DB } from './db.js';
 import { badRequest, conflict, forbidden, notFound } from './errors.js';
 import { effectiveMembership, getMembership } from './groups.js';
+import { displayName, displayNameSql } from './nicknames.js';
 import { getRules, pointsFor, type GameRules } from './rules.js';
 import { getTeamBoard, teamOf, type TeamEntry } from './teams.js';
 
@@ -108,10 +109,13 @@ export function openNextQuestion(db: DB, eventId: number): QuestionRow {
 
 // ----------------------------------------------------------------- buzzes --
 
+/** The group a buzz's quiz belongs to, for looking up nicknames. */
+const BUZZ_GROUP = `(SELECT ev.group_id FROM questions q JOIN events ev ON ev.id = q.event_id WHERE q.id = b.question_id)`;
+
 export function getQueue(db: DB, questionId: number): (BuzzRow & { username: string })[] {
   return db
     .prepare(
-      `SELECT b.*, u.username FROM buzzes b JOIN users u ON u.id = b.user_id
+      `SELECT b.*, ${displayNameSql('u', BUZZ_GROUP)} AS username FROM buzzes b JOIN users u ON u.id = b.user_id
         WHERE b.question_id = ? ORDER BY b.seq`,
     )
     .all(questionId) as unknown as (BuzzRow & { username: string })[];
@@ -121,7 +125,7 @@ export function getQueue(db: DB, questionId: number): (BuzzRow & { username: str
 export function getAnswering(db: DB, questionId: number): (BuzzRow & { username: string }) | undefined {
   return db
     .prepare(
-      `SELECT b.*, u.username FROM buzzes b JOIN users u ON u.id = b.user_id
+      `SELECT b.*, ${displayNameSql('u', BUZZ_GROUP)} AS username FROM buzzes b JOIN users u ON u.id = b.user_id
         WHERE b.question_id = ? AND b.outcome = 'answering' ORDER BY b.seq LIMIT 1`,
     )
     .get(questionId) as (BuzzRow & { username: string }) | undefined;
@@ -304,15 +308,15 @@ export interface BoardEntry {
 export function getLeaderboard(db: DB, eventId: number): BoardEntry[] {
   const rows = db
     .prepare(
-      `SELECT p.user_id, p.score, u.username
+      `SELECT p.user_id, p.score, ${displayNameSql('u', 'e.group_id')} AS display_name
          FROM event_participants p
          JOIN users u ON u.id = p.user_id
          JOIN events e ON e.id = p.event_id
         WHERE p.event_id = ?
           AND (e.question_master_id IS NULL OR e.question_master_id <> p.user_id)
-        ORDER BY p.score DESC, u.username COLLATE NOCASE`,
+        ORDER BY p.score DESC, display_name COLLATE NOCASE`,
     )
-    .all(eventId) as { user_id: number; score: number; username: string }[];
+    .all(eventId) as { user_id: number; score: number; display_name: string }[];
 
   let place = 0;
   let lastScore: number | null = null;
@@ -321,7 +325,7 @@ export function getLeaderboard(db: DB, eventId: number): BoardEntry[] {
       place = i + 1;
       lastScore = r.score;
     }
-    return { place, userId: r.user_id, username: r.username, score: r.score };
+    return { place, userId: r.user_id, username: r.display_name, score: r.score };
   });
 }
 
@@ -376,11 +380,7 @@ export function buildState(db: DB, eventId: number, viewerId: number): EventStat
   if (membership?.status !== 'approved') throw forbidden('You need to be in this group to see its events.');
 
   const group = db.prepare('SELECT name FROM groups WHERE id = ?').get(event.group_id) as { name: string };
-  const master = event.question_master_id
-    ? (db.prepare('SELECT username FROM users WHERE id = ?').get(event.question_master_id) as
-        | { username: string }
-        | undefined)
-    : undefined;
+  const masterName = event.question_master_id ? displayName(db, event.group_id, event.question_master_id) : null;
 
   const question = getOpenQuestion(db, event);
   const queue = question && question.state === 'open' ? getQueue(db, question.id) : [];
@@ -394,8 +394,9 @@ export function buildState(db: DB, eventId: number, viewerId: number): EventStat
 
   const participants = db
     .prepare(
-      `SELECT u.id, u.username, p.score FROM event_participants p JOIN users u ON u.id = p.user_id
-        WHERE p.event_id = ? ORDER BY u.username COLLATE NOCASE`,
+      `SELECT u.id, ${displayNameSql('u', '(SELECT ev.group_id FROM events ev WHERE ev.id = p.event_id)')} AS username, p.score
+         FROM event_participants p JOIN users u ON u.id = p.user_id
+        WHERE p.event_id = ? ORDER BY username COLLATE NOCASE`,
     )
     .all(eventId) as { id: number; username: string; score: number }[];
 
@@ -407,7 +408,7 @@ export function buildState(db: DB, eventId: number, viewerId: number): EventStat
       name: event.name,
       status: event.status,
       questionMasterId: event.question_master_id,
-      questionMasterName: master?.username ?? null,
+      questionMasterName: masterName,
       scheduledFor: event.scheduled_for,
       createdBy: event.created_by,
     },
@@ -482,9 +483,9 @@ const NOT_A_TEAM_QUIZ = `NOT EXISTS (SELECT 1 FROM event_settings s WHERE s.even
  * no score of their own to compare.
  */
 export function getHeadToHead(db: DB, groupId: number, meId: number, themId: number): HeadToHead {
-  const them = db.prepare('SELECT id, username FROM users WHERE id = ?').get(themId) as
-    | { id: number; username: string }
-    | undefined;
+  const them = db
+    .prepare(`SELECT u.id, ${displayNameSql('u', '?')} AS username FROM users u WHERE u.id = ?`)
+    .get(groupId, themId) as { id: number; username: string } | undefined;
   if (!them) throw notFound('That person no longer has an account.');
 
   const rows = db
@@ -575,7 +576,7 @@ export interface QuizHeadToHead {
 export function getQuizHeadToHead(db: DB, eventId: number, meId: number, themId: number): QuizHeadToHead {
   const players = db
     .prepare(
-      `SELECT u.id, u.username, p.score
+      `SELECT u.id, ${displayNameSql('u', '(SELECT ev.group_id FROM events ev WHERE ev.id = p.event_id)')} AS username, p.score
          FROM event_participants p JOIN users u ON u.id = p.user_id
         WHERE p.event_id = ? AND p.user_id IN (?, ?)`,
     )
@@ -615,21 +616,28 @@ export function getQuizHeadToHead(db: DB, eventId: number, meId: number, themId:
 }
 
 /**
- * Question master: put a score right by hand, say after a mis-tap or a
- * challenge upheld. Goes into score_events like any other change, with no
- * question attached, so the history still adds up to the score shown.
+ * Question master or group admin: put a score right by hand, say after a
+ * mis-tap or a challenge upheld. Goes into score_events like any other change,
+ * with no question attached and the person who made it as awarded_by, so the
+ * history still adds up to the score shown and says who changed what.
  */
-export function adjustScore(db: DB, eventId: number, masterId: number, userId: number, delta: number): void {
+export function adjustScore(db: DB, eventId: number, byId: number, userId: number, delta: number): void {
   transaction(db, () => {
     const event = getEvent(db, eventId);
-    requireQuestionMaster(event, masterId);
+    const by = effectiveMembership(db, event.group_id, byId);
+    const isGroupAdmin = by?.status === 'approved' && by.role === 'admin';
+    if (event.question_master_id !== byId && !isGroupAdmin) {
+      throw forbidden('Only the question master or a group admin can change scores.');
+    }
+    // An admin who is playing can't mark their own score up or down.
+    if (userId === byId && event.question_master_id !== byId) throw forbidden('Ask the question master or another admin to change your own score.');
     if (event.status === 'scheduled') throw badRequest('This quiz has not started yet.', 'not_live');
     if (!isParticipant(db, eventId, userId) || userId === event.question_master_id) {
       throw notFound('That person is not playing in this quiz.');
     }
     db.prepare(
       `INSERT INTO score_events (event_id, user_id, question_id, delta, awarded_by) VALUES (?, ?, NULL, ?, ?)`,
-    ).run(eventId, userId, delta, masterId);
+    ).run(eventId, userId, delta, byId);
     db.prepare('UPDATE event_participants SET score = score + ? WHERE event_id = ? AND user_id = ?').run(
       delta,
       eventId,

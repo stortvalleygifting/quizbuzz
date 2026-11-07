@@ -35,6 +35,8 @@ export interface GroupSummary {
 export interface GroupMember {
   id: number;
   username: string;
+  /** What they go by in this group, if they have set one. */
+  nickname: string | null;
   role: 'admin' | 'member';
   joinedAt: string;
 }
@@ -226,6 +228,11 @@ export const api = {
   setRole: (groupId: number, userId: number, role: 'admin' | 'member') =>
     post(`/groups/${groupId}/members/${userId}/role`, { role }),
   removeMember: (groupId: number, userId: number) => del(`/groups/${groupId}/members/${userId}`),
+  setNickname: (groupId: number, userId: number, nickname: string) =>
+    request<{ nickname: string | null }>(`/groups/${groupId}/members/${userId}/nickname`, {
+      method: 'PUT',
+      body: JSON.stringify({ nickname }),
+    }),
 
   groupEvents: (groupId: number) => request<{ events: EventSummary[] }>(`/groups/${groupId}/events`),
   createEvent: (groupId: number, name: string, scheduledFor?: string) =>

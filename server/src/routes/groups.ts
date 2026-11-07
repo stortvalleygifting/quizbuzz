@@ -14,7 +14,8 @@ import {
   serializeGroup,
   type GroupRow,
 } from '../lib/groups.js';
-import { notifyGroupsChanged } from '../lib/realtime.js';
+import { broadcastEvent, notifyGroupsChanged } from '../lib/realtime.js';
+import { setNickname } from '../lib/nicknames.js';
 import { z } from 'zod';
 import type { SQLInputValue } from 'node:sqlite';
 
@@ -138,12 +139,19 @@ groupsRouter.get(
     const members = isMember
       ? (db
           .prepare(
-            `SELECT u.id, u.username, gm.role, gm.joined_at
+            `SELECT u.id, u.username, gn.nickname, gm.role, gm.joined_at
                FROM group_members gm JOIN users u ON u.id = gm.user_id
+               LEFT JOIN group_nicknames gn ON gn.group_id = gm.group_id AND gn.user_id = gm.user_id
               WHERE gm.group_id = ? AND gm.status = 'approved'
-              ORDER BY gm.role = 'admin' DESC, u.username COLLATE NOCASE`,
+              ORDER BY gm.role = 'admin' DESC, COALESCE(gn.nickname, u.username) COLLATE NOCASE`,
           )
-          .all(groupId) as unknown as { id: number; username: string; role: string; joined_at: string }[])
+          .all(groupId) as unknown as {
+          id: number;
+          username: string;
+          nickname: string | null;
+          role: string;
+          joined_at: string;
+        }[])
       : [];
 
     const requests = isAdmin
@@ -163,6 +171,7 @@ groupsRouter.get(
       members: members.map((m) => ({
         id: m.id,
         username: m.username,
+        nickname: m.nickname,
         role: m.role,
         joinedAt: m.joined_at,
       })),
@@ -301,6 +310,51 @@ groupsRouter.delete(
     res.json({ removed: true });
   }),
 );
+
+/**
+ * Set or clear a nickname: the name someone goes by in this group's quizzes
+ * and leaderboards. Anyone can set their own; admins can set anyone's. An
+ * empty nickname goes back to the username.
+ */
+const nicknameSchema = z.object({
+  nickname: z
+    .string()
+    .trim()
+    .max(24, 'Nicknames must be 24 characters or fewer.')
+    .refine((n) => !/[\u0000-\u001f]/.test(n), 'That nickname has characters it cannot use.'),
+});
+groupsRouter.put(
+  '/:groupId/members/:userId/nickname',
+  asyncHandler(async (req, res) => {
+    const groupId = parseId(req.params.groupId, 'group');
+    const userId = parseId(req.params.userId, 'member');
+    const me = req.user!.uid;
+    const { nickname } = parseBody(nicknameSchema, req.body);
+    const db = getDb();
+    getGroup(db, groupId);
+    if (userId === me) requireMember(db, groupId, me);
+    else requireAdmin(db, groupId, me);
+    requireMemberOr404(db, groupId, userId);
+
+    transaction(db, () => setNickname(db, groupId, userId, nickname === '' ? null : nickname, me));
+
+    // Members' screens reload the roster, and any quiz going on shows the new name.
+    notifyGroupsChanged(memberIds(db, groupId), groupId);
+    const events = db
+      .prepare(`SELECT id FROM events WHERE group_id = ? AND status <> 'finished'`)
+      .all(groupId) as unknown as { id: number }[];
+    for (const e of events) await broadcastEvent(e.id);
+    res.json({ nickname: nickname === '' ? null : nickname });
+  }),
+);
+
+function memberIds(db: ReturnType<typeof getDb>, groupId: number): number[] {
+  return (
+    db
+      .prepare(`SELECT user_id FROM group_members WHERE group_id = ? AND status = 'approved'`)
+      .all(groupId) as unknown as { user_id: number }[]
+  ).map((r) => r.user_id);
+}
 
 function requireMemberOr404(db: ReturnType<typeof getDb>, groupId: number, userId: number) {
   const m = getMembership(db, groupId, userId);
