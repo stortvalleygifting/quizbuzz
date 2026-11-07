@@ -20,6 +20,16 @@ CREATE TABLE IF NOT EXISTS users (
   created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- One row for each account that must pick a new password before it can play,
+-- because a system admin gave it a temporary one. Changing the password
+-- deletes the row. A table of its own rather than a column on users, because
+-- this schema is only ever created if missing.
+CREATE TABLE IF NOT EXISTS password_change_required (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  set_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  set_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- ------------------------------------------------------------------ groups --
 CREATE TABLE IF NOT EXISTS groups (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,

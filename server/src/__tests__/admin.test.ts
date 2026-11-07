@@ -90,13 +90,17 @@ describe('system admin', () => {
     const reset = await request(app).post(`/api/admin/users/${ann.id}/reset-password`).set(auth(rob.token));
     expect(reset.status).toBe(200);
     const temp = reset.body.temporaryPassword as string;
-    expect(temp).toMatch(/^[a-z2-9]{4}-[a-z2-9]{4}-[a-z2-9]{4}$/);
+    expect(temp).toMatch(/^[a-z]{4}$/);
 
     expect((await request(app).post('/api/auth/login').send({ username: 'ann', password: 'forgotten-it-1' })).status).toBe(
       401,
     );
     const signedIn = await request(app).post('/api/auth/login').send({ username: 'ann', password: temp });
     expect(signedIn.status).toBe(200);
+    expect(signedIn.body.user.mustChangePassword).toBe(true);
+    expect((await request(app).get('/api/auth/me').set(auth(signedIn.body.token))).body.user.mustChangePassword).toBe(
+      true,
+    );
 
     const wrong = await request(app)
       .post('/api/auth/password')
@@ -108,8 +112,15 @@ describe('system admin', () => {
       .set(auth(signedIn.body.token))
       .send({ currentPassword: temp, newPassword: 'brand-new-one' });
     expect(changed.status).toBe(200);
-    expect((await request(app).post('/api/auth/login').send({ username: 'ann', password: 'brand-new-one' })).status).toBe(
-      200,
-    );
+    const after = await request(app).post('/api/auth/login').send({ username: 'ann', password: 'brand-new-one' });
+    expect(after.status).toBe(200);
+    expect(after.body.user.mustChangePassword).toBe(false);
+    // The temporary one is gone for good.
+    expect((await request(app).post('/api/auth/login').send({ username: 'ann', password: temp })).status).toBe(401);
+  });
+
+  it('does not ask anyone to change a password they chose themselves', async () => {
+    const res = await request(app).post('/api/auth/register').send({ username: 'ann', password: 'hunter2hunter2' });
+    expect(res.body.user.mustChangePassword).toBe(false);
   });
 });

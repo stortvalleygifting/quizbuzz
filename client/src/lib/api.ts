@@ -5,6 +5,8 @@ export interface User {
   signedUpAt: string;
   /** Can see and manage every group, and reset passwords. */
   isSiteAdmin?: boolean;
+  /** Signed in with a temporary password, so must choose a new one first. */
+  mustChangePassword?: boolean;
 }
 
 export interface AdminGroup {

@@ -1,17 +1,23 @@
 import { useState, type FormEvent } from 'react';
 import { useAuth } from '../lib/auth';
+import PasswordInput from '../lib/PasswordInput';
 
 export default function SignIn() {
   const { signIn, signUp } = useAuth();
   const [mode, setMode] = useState<'in' | 'up'>('in');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [repeat, setRepeat] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     setError('');
+    if (mode === 'up' && password !== repeat) {
+      setError('Those two passwords don’t match. Type the same one in both boxes.');
+      return;
+    }
     setBusy(true);
     try {
       await (mode === 'in' ? signIn(username, password) : signUp(username, password));
@@ -45,14 +51,19 @@ export default function SignIn() {
             required
           />
           <label htmlFor="password">Password</label>
-          <input
+          <PasswordInput
             id="password"
-            type="password"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={setPassword}
             autoComplete={mode === 'in' ? 'current-password' : 'new-password'}
-            required
+            minLength={mode === 'up' ? 8 : undefined}
           />
+          {mode === 'up' && (
+            <>
+              <label htmlFor="repeat">Repeat password</label>
+              <PasswordInput id="repeat" value={repeat} onChange={setRepeat} autoComplete="new-password" />
+            </>
+          )}
           <button className="primary block" type="submit" disabled={busy}>
             {busy ? 'One moment…' : mode === 'in' ? 'Sign in' : 'Create account'}
           </button>
@@ -62,6 +73,7 @@ export default function SignIn() {
           onClick={() => {
             setMode(mode === 'in' ? 'up' : 'in');
             setError('');
+            setRepeat('');
           }}
         >
           {mode === 'in' ? 'New here? Create an account' : 'Already have an account? Sign in'}

@@ -1,10 +1,10 @@
 import { Router } from 'express';
-import { getDb } from '../lib/db.js';
+import { getDb, transaction } from '../lib/db.js';
 import { hashPassword, requireAuth, signToken, verifyPassword } from '../lib/auth.js';
 import { asyncHandler } from '../lib/async.js';
 import { isoFromSqliteUtc } from '../lib/dates.js';
 import { badRequest, conflict, unauthorized } from '../lib/errors.js';
-import { credentialsSchema, parseBody, passwordSchema } from '../lib/validation.js';
+import { credentialsSchema, loginSchema, parseBody, passwordSchema } from '../lib/validation.js';
 import { isSiteAdmin } from '../lib/siteAdmin.js';
 import { z } from 'zod';
 
@@ -22,13 +22,19 @@ interface PublicUser {
   signedUpAt: string;
   /** Can see and manage every group, and reset passwords. */
   isSiteAdmin: boolean;
+  /** Signed in with a temporary password, so must choose a new one first. */
+  mustChangePassword: boolean;
 }
+
+const mustChangePassword = (userId: number): boolean =>
+  Boolean(getDb().prepare('SELECT 1 FROM password_change_required WHERE user_id = ?').get(userId));
 
 const toPublicUser = (row: Omit<UserRow, 'password_hash'>): PublicUser => ({
   id: row.id,
   username: row.username,
   signedUpAt: isoFromSqliteUtc(row.created_at),
   isSiteAdmin: isSiteAdmin(row.username),
+  mustChangePassword: mustChangePassword(row.id),
 });
 
 export const authRouter = Router();
@@ -65,15 +71,17 @@ authRouter.post(
 authRouter.post(
   '/login',
   asyncHandler(async (req, res) => {
-    const { username, password } = parseBody(credentialsSchema, req.body);
+    const { username, password } = parseBody(loginSchema, req.body);
     const row = getDb()
       .prepare('SELECT id, username, password_hash, created_at FROM users WHERE username = ?')
       .get(username) as unknown as UserRow | undefined;
 
-    // Same message either way, so the form can't be used to discover usernames.
-    const failure = unauthorized('That username and password don’t match.');
-    if (!row) throw failure;
-    if (!(await verifyPassword(password, row.password_hash))) throw failure;
+    // Rob asked for these to be told apart: a pub crowd mistypes usernames far
+    // more often than anyone goes looking for whose account exists.
+    if (!row) throw unauthorized(`Can’t find a user called “${username}”.`, 'unknown_user');
+    if (!(await verifyPassword(password, row.password_hash))) {
+      throw unauthorized('That password isn’t right.', 'wrong_password');
+    }
 
     const user = toPublicUser(row);
     res.json({ token: signToken({ uid: user.id, username: user.username }), user });
@@ -90,7 +98,8 @@ authRouter.get('/me', requireAuth, (req, res) => {
 
 /**
  * Change your own password. Mostly for replacing the temporary one a system
- * admin set when you forgot yours.
+ * admin set when you forgot yours, which the app insists on before anything
+ * else; doing so clears the "must change" mark.
  */
 const changePasswordSchema = z.object({
   currentPassword: z.string().min(1, 'Enter your current password.'),
@@ -109,7 +118,14 @@ authRouter.post(
     if (!(await verifyPassword(currentPassword, row.password_hash))) {
       throw badRequest('Your current password is not right.', 'wrong_password');
     }
-    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(await hashPassword(newPassword), req.user!.uid);
+    if (newPassword === currentPassword) {
+      throw badRequest('Pick a password that’s different from your current one.', 'same_password');
+    }
+    const hash = await hashPassword(newPassword);
+    transaction(db, () => {
+      db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, req.user!.uid);
+      db.prepare('DELETE FROM password_change_required WHERE user_id = ?').run(req.user!.uid);
+    });
     res.json({ changed: true });
   }),
 );

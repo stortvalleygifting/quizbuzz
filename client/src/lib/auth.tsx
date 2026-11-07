@@ -8,6 +8,13 @@ interface AuthValue {
   signIn: (username: string, password: string) => Promise<void>;
   signUp: (username: string, password: string) => Promise<void>;
   signOut: () => void;
+  /**
+   * The temporary password they just signed in with, held in memory only, so
+   * the change-password screen it leads to needn't ask for it again.
+   */
+  temporaryPassword: string | null;
+  /** Their password has been changed, so stop insisting on it. */
+  passwordChanged: () => void;
 }
 
 const AuthContext = createContext<AuthValue | null>(null);
@@ -15,6 +22,7 @@ const AuthContext = createContext<AuthValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [temporaryPassword, setTemporaryPassword] = useState<string | null>(null);
 
   useEffect(() => {
     if (!getToken()) {
@@ -37,16 +45,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       user,
       loading,
-      signIn: async (u, p) => adopt(await api.login(u, p)),
+      signIn: async (u, p) => {
+        const r = await api.login(u, p);
+        setTemporaryPassword(r.user.mustChangePassword ? p : null);
+        adopt(r);
+      },
       signUp: async (u, p) => adopt(await api.register(u, p)),
       signOut: () => {
         // Drop the socket too, so it doesn't reconnect with the old token.
         closeSocket();
         setToken(null);
         setUser(null);
+        setTemporaryPassword(null);
+      },
+      temporaryPassword,
+      passwordChanged: () => {
+        setTemporaryPassword(null);
+        setUser((u) => (u ? { ...u, mustChangePassword: false } : u));
       },
     }),
-    [user, loading, adopt],
+    [user, loading, adopt, temporaryPassword],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

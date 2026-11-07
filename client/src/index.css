@@ -540,3 +540,19 @@ a { color: var(--accent-bright); }
 
 .qm-team { display: inline-flex; align-items: center; gap: 6px; font-size: 16px; font-weight: 700; color: var(--text); }
 .buzzed.team { border-width: 3px; }
+
+/* ---------------------------------------------------------- password box -- */
+.password-field { position: relative; }
+.password-field input { padding-right: 76px; }
+.password-field .reveal {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  min-height: 38px;
+  padding: 6px 12px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--accent-bright);
+  background: none;
+  border: none;
+}

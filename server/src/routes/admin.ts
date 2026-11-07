@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { randomInt } from 'node:crypto';
-import { getDb } from '../lib/db.js';
+import { getDb, transaction } from '../lib/db.js';
 import { hashPassword, requireAuth } from '../lib/auth.js';
 import { asyncHandler } from '../lib/async.js';
 import { isoFromSqliteUtc } from '../lib/dates.js';
@@ -52,16 +52,19 @@ adminRouter.get('/users', (req, res) => {
   });
 });
 
-/** Easy to read out across a pub table: no 0/O or 1/l/I to mix up. */
-const TEMP_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
-function temporaryPassword(): string {
-  const chunk = () => Array.from({ length: 4 }, () => TEMP_ALPHABET[randomInt(TEMP_ALPHABET.length)]).join('');
-  return `${chunk()}-${chunk()}-${chunk()}`;
-}
+/**
+ * Four lowercase letters, short enough to read out across a pub table. It is
+ * only good for one sign-in: the app makes them choose their own password
+ * straight away.
+ */
+const TEMP_ALPHABET = 'abcdefghijklmnopqrstuvwxyz';
+const temporaryPassword = (): string =>
+  Array.from({ length: 4 }, () => TEMP_ALPHABET[randomInt(TEMP_ALPHABET.length)]).join('');
 
 /**
  * Give someone a new temporary password, for when they have forgotten theirs.
- * It is shown once, to the admin, to pass on; they can change it afterwards.
+ * It is shown once, to the admin, to pass on; they must choose a new one the
+ * next time they sign in.
  */
 adminRouter.post(
   '/users/:userId/reset-password',
@@ -71,7 +74,14 @@ adminRouter.post(
     const user = db.prepare('SELECT username FROM users WHERE id = ?').get(userId) as { username: string } | undefined;
     if (!user) throw notFound('That account does not exist.');
     const password = temporaryPassword();
-    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(await hashPassword(password), userId);
+    const hash = await hashPassword(password);
+    transaction(db, () => {
+      db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, userId);
+      db.prepare(
+        `INSERT INTO password_change_required (user_id, set_by) VALUES (?, ?)
+         ON CONFLICT (user_id) DO UPDATE SET set_by = excluded.set_by, set_at = datetime('now')`,
+      ).run(userId, req.user!.uid);
+    });
     console.log(`password reset: ${user.username} by ${req.user!.username}`);
     res.json({ username: user.username, temporaryPassword: password });
   }),
