@@ -5,6 +5,7 @@ import request from 'supertest';
 import { io as connect, type Socket as ClientSocket } from 'socket.io-client';
 import type { Server as SocketServer } from 'socket.io';
 import type { Express } from 'express';
+import jwt from 'jsonwebtoken';
 import { openDatabase, setDb } from '../lib/db.js';
 import { createApp } from '../app.js';
 import { createSocketServer, detachRealtime } from '../lib/realtime.js';
@@ -84,6 +85,32 @@ describe('the live channel', () => {
     clients.push(socket);
     const err = await new Promise<Error>((resolve) => socket.once('connect_error', resolve));
     expect(err.message).toBe('unauthorized');
+  });
+
+  it('turns an expired token away, and /me says so too, so the app can send them to sign in', async () => {
+    const { token, id } = await register('ann');
+    const secret = process.env.JWT_SECRET ?? (await import('node:fs')).readFileSync('data/.jwt-secret', 'utf8').trim();
+    expect(jwt.verify(token, secret)).toBeTruthy();
+    const expired = jwt.sign({ uid: id, username: 'ann', exp: Math.floor(Date.now() / 1000) - 60 }, secret);
+
+    const socket = connect(url, { auth: { token: expired }, transports: ['websocket'] });
+    clients.push(socket);
+    const err = await new Promise<Error>((resolve) => socket.once('connect_error', resolve));
+    expect(err.message).toBe('unauthorized');
+    expect(socket.active).toBe(false);
+    expect((await request(app).get('/api/auth/me').set(auth(expired))).status).toBe(401);
+  });
+
+  it('hands back a fresh token on connect, so a sign-in keeps renewing', async () => {
+    const { token, id } = await register('ann');
+    const socket = connect(url, { auth: { token }, transports: ['websocket'] });
+    clients.push(socket);
+    const ready = await new Promise<{ token?: string }>((resolve) => socket.once('ready', resolve));
+    expect(ready.token).toBeTruthy();
+    const me = await request(app).get('/api/auth/me').set(auth(ready.token!));
+    expect(me.status).toBe(200);
+    expect(me.body.user.id).toBe(id);
+    expect(me.body.token).toBeTruthy();
   });
 
   it('pushes a buzz to every screen at once', async () => {

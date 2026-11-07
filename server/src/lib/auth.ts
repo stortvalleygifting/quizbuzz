@@ -6,7 +6,13 @@ import { dirname, resolve } from 'node:path';
 import type { NextFunction, Request, Response } from 'express';
 import { unauthorized } from './errors.js';
 
-const TOKEN_TTL = '30d';
+/**
+ * How long a sign-in lasts without the app being opened. The app swaps in a
+ * fresh token every time it connects, so anyone who plays at least this often
+ * stays signed in for good; the old fixed 30 days ran out mid-quiz for people
+ * who had signed in exactly a month before.
+ */
+const TOKEN_TTL = '90d';
 const BCRYPT_ROUNDS = 10;
 
 export interface TokenPayload {
