@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { displayName } from '../lib/nicknames.js';
 import { z } from 'zod';
 import { getDb, transaction } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
@@ -66,13 +67,11 @@ function summarize(eventId: number, viewerId: number) {
   const { n } = db.prepare('SELECT COUNT(*) AS n FROM event_participants WHERE event_id = ?').get(eventId) as {
     n: number;
   };
-  const master = e.question_master_id
-    ? (db.prepare('SELECT username FROM users WHERE id = ?').get(e.question_master_id) as { username: string } | undefined)
-    : undefined;
+  const masterName = e.question_master_id ? displayName(db, e.group_id, e.question_master_id) : null;
   return serializeEvent(e, {
     participantCount: n,
     joined: isParticipant(db, eventId, viewerId),
-    questionMasterName: master?.username ?? null,
+    questionMasterName: masterName,
   });
 }
 
@@ -323,7 +322,7 @@ eventsRouter.post(
   }),
 );
 
-/** Question master: change someone's score by hand (press and hold their name). */
+/** Question master or group admin: change someone's score by hand (press and hold their name). */
 const adjustSchema = z.object({
   userId: z.number().int().positive(),
   delta: z

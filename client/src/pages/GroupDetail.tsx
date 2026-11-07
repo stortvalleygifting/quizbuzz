@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api, type EventSummary, type GroupDetail as Detail } from '../lib/api';
+import { api, type EventSummary, type GroupDetail as Detail, type GroupMember } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useConfirm } from '../lib/confirm';
 import { useGroupsChanged } from '../lib/useGroupsChanged';
@@ -18,6 +18,7 @@ export default function GroupDetail() {
   const [eventWhen, setEventWhen] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [naming, setNaming] = useState<GroupMember | null>(null);
 
   const refresh = useCallback(async () => {
     const d = await api.group(id);
@@ -209,58 +210,88 @@ export default function GroupDetail() {
             {members.map((m) => {
               const isMe = m.id === user?.id;
               return (
-                <div className="row" key={m.id}>
-                  <div className="grow">
-                    <div className="name">
-                      {isMe ? (
-                        <>
-                          {m.username}
-                          <span className="sub"> (you)</span>
-                        </>
-                      ) : (
-                        // Tapping someone's name opens your record against them.
-                        <Link to={`/groups/${id}/vs/${m.id}`}>{m.username}</Link>
+                <div key={m.id}>
+                  <div className="row">
+                    <div className="grow">
+                      <div className="name">
+                        {isMe ? (
+                          <>
+                            {m.nickname ?? m.username}
+                            <span className="sub"> (you)</span>
+                          </>
+                        ) : (
+                          // Tapping someone's name opens your record against them.
+                          <Link to={`/groups/${id}/vs/${m.id}`}>{m.nickname ?? m.username}</Link>
+                        )}
+                      </div>
+                      {/* The username they sign in with, under the name they go by here. */}
+                      {m.nickname && <div className="sub">{m.username}</div>}
+                    </div>
+                    {m.role === 'admin' && <span className="pill admin">Admin</span>}
+                  </div>
+                  {/* On a phone there is no room for these beside the name, so they get a line of their own. */}
+                  {(isMe ? isMember : isAdmin) && (
+                    <div className="row member-actions">
+                      <button className="small" disabled={busy} onClick={() => setNaming(m)}>
+                        {isMe ? 'Set nickname' : 'Nickname'}
+                      </button>
+                      {isAdmin && !isMe && m.role === 'member' && (
+                        <button
+                          className="small"
+                          disabled={busy}
+                          onClick={() => act(() => api.setRole(id, m.id, 'admin'))}
+                        >
+                          Make admin
+                        </button>
+                      )}
+                      {isAdmin && !isMe && m.role === 'admin' && (
+                        <button
+                          className="small"
+                          disabled={busy}
+                          onClick={() => act(() => api.setRole(id, m.id, 'member'))}
+                        >
+                          Step down
+                        </button>
+                      )}
+                      {isAdmin && !isMe && (
+                        <button
+                          className="small danger"
+                          disabled={busy}
+                          onClick={async () => {
+                            if (
+                              await confirm({
+                                title: `Remove ${m.nickname ?? m.username}?`,
+                                message: `They will have to ask to join ${group.name} again.`,
+                                confirmLabel: 'Remove',
+                                danger: true,
+                              })
+                            )
+                              act(() => api.removeMember(id, m.id));
+                          }}
+                        >
+                          Remove
+                        </button>
                       )}
                     </div>
-                  </div>
-                  {m.role === 'admin' && <span className="pill admin">Admin</span>}
-                  {isAdmin && !isMe && m.role === 'member' && (
-                    <button className="small" disabled={busy} onClick={() => act(() => api.setRole(id, m.id, 'admin'))}>
-                      Make admin
-                    </button>
-                  )}
-                  {isAdmin && !isMe && m.role === 'admin' && (
-                    <button
-                      className="small"
-                      disabled={busy}
-                      onClick={() => act(() => api.setRole(id, m.id, 'member'))}
-                    >
-                      Step down
-                    </button>
-                  )}
-                  {isAdmin && !isMe && (
-                    <button
-                      className="small danger"
-                      disabled={busy}
-                      onClick={async () => {
-                        if (
-                          await confirm({
-                            title: `Remove ${m.username}?`,
-                            message: `They will have to ask to join ${group.name} again.`,
-                            confirmLabel: 'Remove',
-                            danger: true,
-                          })
-                        )
-                          act(() => api.removeMember(id, m.id));
-                      }}
-                    >
-                      Remove
-                    </button>
                   )}
                 </div>
               );
             })}
           </div>
+
+          {naming && (
+            <NicknameEditor
+              member={naming}
+              isMe={naming.id === user?.id}
+              groupName={group.name}
+              onClose={() => setNaming(null)}
+              onSave={async (nickname) => {
+                const who = naming;
+                setNaming(null);
+                await act(() => api.setNickname(id, who.id, nickname));
+              }}
+            />
+          )}
 
           {reallyMember && (
             <button
@@ -283,6 +314,60 @@ export default function GroupDetail() {
           )}
         </>
       )}
+    </div>
+  );
+}
+
+/** Set what someone goes by in this group. Leaving it empty goes back to their username. */
+function NicknameEditor({
+  member,
+  isMe,
+  groupName,
+  onSave,
+  onClose,
+}: {
+  member: GroupMember;
+  isMe: boolean;
+  groupName: string;
+  onSave: (nickname: string) => void;
+  onClose: () => void;
+}) {
+  const [nickname, setNickname] = useState(member.nickname ?? '');
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <form
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        onClick={(e) => e.stopPropagation()}
+        onSubmit={(e) => {
+          e.preventDefault();
+          onSave(nickname.trim());
+        }}
+      >
+        <h2>{isMe ? 'Your nickname' : `${member.username}'s nickname`}</h2>
+        <p className="sub">
+          {isMe ? 'What you' : 'What they'} go by in {groupName}'s quizzes and leaderboards. Signing in still uses{' '}
+          {member.username}. Leave it empty to go back to that.
+        </p>
+        <label htmlFor="nickname">Nickname</label>
+        <input
+          id="nickname"
+          value={nickname}
+          onChange={(e) => setNickname(e.target.value)}
+          placeholder={member.username}
+          maxLength={24}
+          autoFocus
+        />
+        <div className="modal-actions">
+          <button type="button" className="block" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" className="block primary">
+            Save
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

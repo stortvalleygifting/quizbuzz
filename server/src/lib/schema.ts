@@ -172,4 +172,19 @@ CREATE TABLE IF NOT EXISTS event_team_members (
   PRIMARY KEY (event_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_event_team_members_team ON event_team_members(team_id);
+
+-- --------------------------------------------------------------- nicknames --
+-- What someone is called in one group, shown in place of their username on
+-- that group's members list, quizzes and leaderboards. They sign in with the
+-- same username everywhere. No row means they go by their username. A table
+-- of its own, not a column on group_members, so it reaches the live database.
+CREATE TABLE IF NOT EXISTS group_nicknames (
+  group_id   INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+  user_id    INTEGER NOT NULL REFERENCES users(id)  ON DELETE CASCADE,
+  nickname   TEXT NOT NULL COLLATE NOCASE,
+  set_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (group_id, user_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_group_nicknames_unique ON group_nicknames(group_id, nickname);
 `;

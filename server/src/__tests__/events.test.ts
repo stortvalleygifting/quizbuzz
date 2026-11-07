@@ -617,6 +617,22 @@ describe('adjusting a score by hand', () => {
     expect((await adjust(eventId, owner.token, ann.id, 0)).status).toBe(400);
   });
 
+  it('lets a group admin who is not the question master change a score, but not their own', async () => {
+    const { eventId, groupId, owner, players } = await liveEvent(['ann', 'bob']);
+    const [ann, bob] = players;
+    await request(app).post(`/api/groups/${groupId}/members/${ann.id}/role`).set(auth(owner.token)).send({ role: 'admin' });
+
+    const r = await adjust(eventId, ann.token, bob.id, 2);
+    expect(r.status).toBe(200);
+    expect(r.body.state.leaderboard.find((e: { userId: number }) => e.userId === bob.id).score).toBe(2);
+    expect(
+      getDb().prepare('SELECT awarded_by FROM score_events WHERE event_id = ? AND user_id = ?').get(eventId, bob.id),
+    ).toEqual({ awarded_by: ann.id });
+
+    expect((await adjust(eventId, ann.token, ann.id, 2)).status).toBe(403);
+    expect((await adjust(eventId, bob.token, ann.id, 2)).status).toBe(403);
+  });
+
   it('can still put a score right after the quiz has finished', async () => {
     const { eventId, owner, players } = await liveEvent(['ann']);
     await request(app).post(`/api/events/${eventId}/finish`).set(auth(owner.token));
@@ -923,5 +939,63 @@ describe('teams', () => {
     const back = await setRules(eventId, owner.token, rules('individuals'));
     expect(back.body.state.teams).toEqual([]);
     expect(back.body.state.me.teamId).toBeNull();
+  });
+});
+
+describe('nicknames', () => {
+  const setNick = (groupId: number, token: string, userId: number, nickname: string) =>
+    request(app).put(`/api/groups/${groupId}/members/${userId}/nickname`).set(auth(token)).send({ nickname });
+  const roster = async (groupId: number, token: string) =>
+    (await request(app).get(`/api/groups/${groupId}`).set(auth(token))).body.members as {
+      id: number;
+      username: string;
+      nickname: string | null;
+    }[];
+
+  it('lets people set their own, admins set anyone\'s, and shows them in the quiz', async () => {
+    const { eventId, groupId, owner, players } = await liveEvent(['ann', 'bob']);
+    const [ann, bob] = players;
+
+    expect((await setNick(groupId, ann.token, ann.id, '  Annie  ')).status).toBe(200);
+    expect((await setNick(groupId, owner.token, bob.id, 'Big Bob')).status).toBe(200);
+    expect((await setNick(groupId, owner.token, owner.id, 'Quizmaster')).status).toBe(200);
+    // A member can't rename someone else.
+    expect((await setNick(groupId, ann.token, bob.id, 'Smelly')).status).toBe(403);
+
+    const members = await roster(groupId, bob.token);
+    expect(members.find((m) => m.id === ann.id)).toMatchObject({ username: 'ann', nickname: 'Annie' });
+    expect(members.find((m) => m.id === bob.id)).toMatchObject({ username: 'bob', nickname: 'Big Bob' });
+
+    await buzz(eventId, bob.token);
+    await buzz(eventId, ann.token);
+    const s = await state(eventId, ann.token);
+    expect(s.event.questionMasterName).toBe('Quizmaster');
+    expect(s.answering.username).toBe('Big Bob');
+    expect(s.queue.map((b: { username: string }) => b.username)).toEqual(['Big Bob', 'Annie']);
+    expect(s.leaderboard.map((e: { username: string }) => e.username).sort()).toEqual(['Annie', 'Big Bob']);
+
+    // Clearing it goes back to the username, which still signs in as before.
+    expect((await setNick(groupId, ann.token, ann.id, '')).status).toBe(200);
+    expect((await roster(groupId, ann.token)).find((m) => m.id === ann.id)?.nickname).toBeNull();
+    const login = await request(app).post('/api/auth/login').send({ username: 'bob', password: 'hunter2hunter2' });
+    expect(login.status).toBe(200);
+  });
+
+  it('keeps names unique within a group, but not across groups', async () => {
+    const { groupId, owner, players } = await liveEvent(['ann', 'bob']);
+    const [ann, bob] = players;
+
+    expect((await setNick(groupId, ann.token, ann.id, 'Ace')).status).toBe(200);
+    expect((await setNick(groupId, bob.token, bob.id, 'ace')).status).toBe(409);
+    // Nor can you take someone else's username.
+    expect((await setNick(groupId, bob.token, bob.id, 'ANN')).status).toBe(409);
+    expect((await setNick(groupId, bob.token, bob.id, 'x'.repeat(25))).status).toBe(400);
+
+    const other = (await request(app).post('/api/groups').set(auth(owner.token)).send({ name: 'Friday Quiz' })).body
+      .group.id as number;
+    await request(app).post(`/api/groups/${other}/apply`).set(auth(bob.token));
+    await request(app).post(`/api/groups/${other}/members/${bob.id}/approve`).set(auth(owner.token));
+    expect((await setNick(other, bob.token, bob.id, 'Ace')).status).toBe(200);
+    expect((await roster(groupId, bob.token)).find((m) => m.id === bob.id)?.nickname).toBeNull();
   });
 });
