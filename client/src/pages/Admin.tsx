@@ -36,7 +36,7 @@ export default function Admin() {
   async function resetPassword(u: AdminUser) {
     const ok = await confirm({
       title: `Reset ${u.username}'s password?`,
-      message: 'Their old password stops working. You will get a temporary one to pass on to them.',
+      message: 'Their old password stops working. You will get a four-letter temporary one to pass on to them.',
       confirmLabel: 'Reset',
       danger: true,
     });
@@ -118,8 +118,8 @@ export default function Admin() {
             <h2>{reset.username}'s temporary password</h2>
             <div className="temp-password">{reset.temporaryPassword}</div>
             <p className="sub">
-              Pass this on to {reset.username}. It is only shown once. They can change it from "Change password" once
-              they have signed in.
+              Pass this on to {reset.username}. It is only shown once, and only works for one sign-in: they will be asked
+              to pick their own password straight away.
             </p>
             <button className="primary block" onClick={() => setReset(null)}>
               Done

@@ -49,7 +49,7 @@ describe('accounts', () => {
     expect(short.status).toBe(400);
   });
 
-  it('gives the same answer for a wrong password and an unknown user', async () => {
+  it('tells an unknown user apart from a wrong password', async () => {
     await register('quizzer');
     const wrongPass = await request(app)
       .post('/api/auth/login')
@@ -58,8 +58,10 @@ describe('accounts', () => {
       .post('/api/auth/login')
       .send({ username: 'nobody', password: 'wrongwrongwrong' });
     expect(wrongPass.status).toBe(401);
+    expect(wrongPass.body.code).toBe('wrong_password');
     expect(noUser.status).toBe(401);
-    expect(wrongPass.body.error).toBe(noUser.body.error);
+    expect(noUser.body.code).toBe('unknown_user');
+    expect(noUser.body.error).toContain('nobody');
   });
 
   it('refuses requests without a token', async () => {

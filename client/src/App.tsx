@@ -13,6 +13,8 @@ export default function App() {
 
   if (loading) return <div className="app"><div className="empty">Loading…</div></div>;
   if (!user) return <SignIn />;
+  // A temporary password from a system admin is good for one sign-in only.
+  if (user.mustChangePassword) return <Account forced />;
 
   return (
     <Routes>
