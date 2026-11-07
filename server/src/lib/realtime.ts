@@ -1,7 +1,7 @@
 import type { Server as HttpServer } from 'node:http';
 import { Server as SocketServer, type Socket } from 'socket.io';
 import { getDb } from './db.js';
-import { verifyToken } from './auth.js';
+import { signToken, verifyToken } from './auth.js';
 import { HttpError } from './errors.js';
 import { buildState, canWatch, getEvent, judgeAnswer, recordBuzz, type Judgement } from './events.js';
 
@@ -51,7 +51,10 @@ export function attachRealtime(server: SocketServer): void {
     socket.on('disconnect', (reason) => console.log(`socket dropped: ${who} (${reason})`));
     const uid = socket.data.user?.uid as number | undefined;
     if (uid) socket.join(userRoom(uid));
-    socket.emit('ready', { user: socket.data.user });
+    // Hand back a fresh token on every (re)connect, so a phone that stays on
+    // the quiz screen keeps its sign-in renewed.
+    const user = socket.data.user as { uid: number; username: string } | undefined;
+    socket.emit('ready', { user, token: user ? signToken(user) : undefined });
     registerHandlers(socket);
   });
 }

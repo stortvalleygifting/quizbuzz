@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { api, getToken, setToken, type User } from './api';
+import { api, getToken, onSessionExpired, setToken, type User } from './api';
 import { closeSocket } from './socket';
 
 interface AuthValue {
@@ -17,13 +17,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    onSessionExpired(() => {
+      closeSocket();
+      setUser(null);
+    });
+    return () => onSessionExpired(null);
+  }, []);
+
+  useEffect(() => {
     if (!getToken()) {
       setLoading(false);
       return;
     }
     api
       .me()
-      .then((r) => setUser(r.user))
+      .then((r) => {
+        if (r.token) setToken(r.token);
+        setUser(r.user);
+      })
       .catch(() => setToken(null))
       .finally(() => setLoading(false));
   }, []);

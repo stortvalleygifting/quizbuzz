@@ -1,11 +1,11 @@
 import { io, type Socket } from 'socket.io-client';
-import { getToken } from './api';
+import { api, ApiError, getToken, setToken } from './api';
 
 let socket: Socket | null = null;
 
 /** How long a woken phone waits for the server to answer before it redials. */
 const ALIVE_TIMEOUT_MS = 2500;
-/** How long to wait before retrying after the server turned the sign-in down. */
+/** How long to wait before retrying after the server turned the connection down. */
 const REFUSED_RETRY_MS = 5000;
 
 /**
@@ -24,14 +24,35 @@ export function getSocket(): Socket {
       reconnectionDelayMax: 3000,
     });
 
+    // Every connect hands back a fresh token, so a phone left on the quiz
+    // screen keeps renewing its sign-in rather than letting it run out.
+    s.on('ready', (r: { token?: string }) => {
+      if (socket === s && r?.token && getToken()) setToken(r.token);
+    });
+
     // Socket.IO gives up for good when the server's sign-in check refuses the
-    // connection, which left the screen on "Reconnecting…" forever. Try again
-    // while there is still a token to try with.
+    // connection. Retrying with the same token used to loop on "Reconnecting…"
+    // forever once that token had expired, until the player signed out and in
+    // again. So ask the server whether the sign-in is still good: if it is
+    // not, that request sends the app back to the sign-in screen; if it is,
+    // it hands back a fresh token to retry with.
     s.on('connect_error', () => {
       if (s.active || !getToken()) return;
-      setTimeout(() => {
-        if (socket === s && !s.connected && getToken()) s.connect();
-      }, REFUSED_RETRY_MS);
+      api
+        .me()
+        .then((r) => {
+          if (r.token) setToken(r.token);
+          return true;
+        })
+        // A 401 has already signed the app out. Anything else (no signal)
+        // is worth another try in a moment.
+        .catch((e) => !(e instanceof ApiError && e.status === 401))
+        .then((retry) => {
+          if (!retry) return;
+          setTimeout(() => {
+            if (socket === s && !s.connected && !s.active && getToken()) s.connect();
+          }, REFUSED_RETRY_MS);
+        });
     });
 
     socket = s;

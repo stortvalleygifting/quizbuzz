@@ -166,6 +166,16 @@ export const getToken = () => localStorage.getItem(TOKEN_KEY);
 export const setToken = (t: string | null) =>
   t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY);
 
+let onExpired: (() => void) | null = null;
+/**
+ * Called whenever the server says the sign-in is no longer good, so the app
+ * goes back to the sign-in screen instead of sitting on a screen it can no
+ * longer keep up to date.
+ */
+export const onSessionExpired = (fn: (() => void) | null) => {
+  onExpired = fn;
+};
+
 /** Thrown for any non-2xx response, carrying the server's own wording. */
 export class ApiError extends Error {
   constructor(
@@ -190,7 +200,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    if (res.status === 401) setToken(null);
+    // Only a request that carried a token can mean "your sign-in has run out";
+    // a wrong password on the sign-in form is a 401 too.
+    if (res.status === 401 && token) {
+      setToken(null);
+      onExpired?.();
+    }
     throw new ApiError(res.status, body.error ?? 'Something went wrong.', body.code ?? 'error');
   }
   return body as T;
@@ -205,7 +220,7 @@ export const api = {
     post<{ token: string; user: User }>('/auth/register', { username, password }),
   login: (username: string, password: string) =>
     post<{ token: string; user: User }>('/auth/login', { username, password }),
-  me: () => request<{ user: User }>('/auth/me'),
+  me: () => request<{ user: User; token?: string }>('/auth/me'),
   changePassword: (currentPassword: string, newPassword: string) =>
     post<{ changed: true }>('/auth/password', { currentPassword, newPassword }),
 

@@ -85,7 +85,9 @@ authRouter.get('/me', requireAuth, (req, res) => {
     .prepare('SELECT id, username, created_at FROM users WHERE id = ?')
     .get(req.user!.uid) as unknown as Omit<UserRow, 'password_hash'> | undefined;
   if (!row) throw unauthorized();
-  res.json({ user: toPublicUser(row) });
+  // A fresh token on every visit, so a sign-in only runs out if the app goes
+  // unused for the whole token lifetime.
+  res.json({ user: toPublicUser(row), token: signToken({ uid: req.user!.uid, username: req.user!.username }) });
 });
 
 /**
